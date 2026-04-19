@@ -39,7 +39,7 @@ The default and intended setup is that the Python code and Ollama both run on th
 http://localhost:11434
 ```
 
-This is the setup that other users, such as the tutor, are expected to use.
+This is the setup that other users, are expected to use.
 
 ### 2. Optional remote development setup
 
@@ -69,26 +69,6 @@ http://localhost:11434
 ```
 
 This means that if Ollama is running locally on the same machine, no additional setup is required.
-
----
-
-## Optional Remote Setup with Tailscale
-
-This section describes the additional setup used for my personal workflow.
-
-### Why this was added
-
-My desktop PC provides stronger hardware for local inference, while my Mac is more convenient for coding and writing. To make development easier, I configured the project so that the Mac could send requests to Ollama running on the desktop PC.
-
-### What was used
-
-* **Tailscale** was used to create a private connection between the Mac and the PC
-* Ollama was configured on the PC so that it could be reached through the Tailscale network
-* the Mac was configured to use the PC’s Tailscale address instead of localhost
-
-### Important note
-
-This remote setup is optional and mainly intended for development convenience. It is **not required** for normal use of the project. If someone else clones the repository and wants to run Baby Claw normally, they can simply run Ollama locally and keep the default localhost configuration.
 
 ---
 
@@ -227,11 +207,5 @@ During development, several local models were tested in order to evaluate:
 * practical usability for a multi-agent workflow
 
 The final implementation was guided not only by model quality, but also by development practicality. Since Baby Claw may make multiple model calls during a single request, inference speed was an important factor in deciding which model to use during implementation.
-
----
-
-## Final Note
-
-The project is designed so that it can be run locally on one machine as intended by the assignment. The optional Mac-to-PC remote setup was added only for personal development convenience and does not change the core architecture of the system.
 
 ---
