@@ -1,8 +1,12 @@
 from agents.coordinator import CoordinatorAgent
+from agents.planner import PlannerAgent
+from agents.memory import MemoryAgent
 
 
 def main() -> None:
-    coordinator = CoordinatorAgent()
+    memory = MemoryAgent()
+    planner = PlannerAgent(memory=memory)
+    coordinator = CoordinatorAgent(planner=planner, memory=memory)
 
     while True:
         prompt = input("You: ").strip()

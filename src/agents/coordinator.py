@@ -45,11 +45,7 @@ class CoordinatorAgent:
             f"User request:\n{prompt}"
         )
 
-        result = self.client.ask(
-            prompt=classifier_user_prompt,
-            system_prompt=classifier_system_prompt,
-            temperature=0.1
-        ).strip().upper()
+        result = self.client.ask(prompt=classifier_user_prompt,system_prompt=classifier_system_prompt,temperature=0.1).strip().upper()
 
         return result.startswith("SIMPLE")
 
@@ -64,13 +60,20 @@ class CoordinatorAgent:
                 pass
 
         if self.is_simple_question(prompt):
-            response = self.client.ask(prompt, temperature=0.2)
+            short_term_context = self._get_short_term_context()
+
+            simple_user_prompt = (
+                f"Recent context:\n{short_term_context}\n\n"
+                f"Current user request:\n{prompt}"
+            )
+
+            response = self.client.ask(simple_user_prompt, temperature=0.2)
 
         else:
             if self.planner is None:
                 response = (
-                    "This task appears to require planning, "
-                    "but the Planner Agent has not been connected yet."
+                    # For my sanity I added a fallback response in case the planner isn't set up correctly
+                    "This task appears to require planning, but the Planner Agent has not been connected yet." 
                 )
             else:
                 response = self.planner.handle(prompt)

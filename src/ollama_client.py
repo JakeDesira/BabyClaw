@@ -3,7 +3,7 @@ from ollama import Client
 
 
 class OllamaClient:
-    def __init__(self, model: str | None = None):
+    def __init__(self, model: str | None = None, supports_think: bool = False):
         """
         Wrapper for communicating with a local or remote Ollama instance.
 
@@ -14,6 +14,7 @@ class OllamaClient:
         self.host = os.getenv("OLLAMA_HOST_URL", "http://localhost:11434")
         self.model = model or os.getenv("OLLAMA_MODEL", "gpt-oss:20b") # Default to "gpt-oss:20b" if not set in environment variables
         self.client = Client(host=self.host)
+        self.supports_think = supports_think
 
     def ask(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None, think: str | bool | None = None) -> str:
         """
@@ -26,22 +27,22 @@ class OllamaClient:
 
         messages.append({"role": "user", "content": prompt})
         
+        # Implemented so that if another model is used doesn't support the "think" option, it can be set to None and ignored in the request
+        request_args = {
+            "model": self.model,
+            "messages": messages,
+        }
+       
         # For creative tasks, a higher temperature can be used. 
         # For more deterministic responses, a lower temperature is better.
         options = {}
         if temperature is not None:
             options["temperature"] = temperature
 
-        # Implemented so that if another model is used doesn't support the "think" option, it can be set to None and ignored in the request
-        request_args = {
-            "model": self.model,
-            "messages": messages,
-        }
-
         if options:
             request_args["options"] = options
         
-        if think is not None:
+        if think is not None and self.supports_think:
             request_args["think"] = think
 
         try:
