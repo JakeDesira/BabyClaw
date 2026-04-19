@@ -2,7 +2,7 @@ from ollama_client import OllamaClient
 
 
 class CoordinatorAgent:
-    def __init__(self, planner=None, memory=None, model: str = "gpt-oss:20b"):
+    def __init__(self, planner=None, memory=None, model: str | None = None):
         """
         Entry point of the Baby Claw architecture.
 
@@ -47,7 +47,8 @@ class CoordinatorAgent:
 
         result = self.client.ask(
             prompt=classifier_user_prompt,
-            system_prompt=classifier_system_prompt
+            system_prompt=classifier_system_prompt,
+            temperature=0.1
         ).strip().upper()
 
         return result.startswith("SIMPLE")
@@ -63,7 +64,7 @@ class CoordinatorAgent:
                 pass
 
         if self.is_simple_question(prompt):
-            response = self.client.ask(prompt)
+            response = self.client.ask(prompt, temperature=0.2)
 
         else:
             if self.planner is None:
