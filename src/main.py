@@ -1,11 +1,15 @@
 from agents.coordinator import CoordinatorAgent
 from agents.planner import PlannerAgent
 from agents.memory import MemoryAgent
+from agents.executor import ExecutorAgent
+from agents.reviewer import ReviewerAgent
 
 
 def main() -> None:
     memory = MemoryAgent()
-    planner = PlannerAgent(memory=memory)
+    executor = ExecutorAgent(memory=memory)
+    reviewer = ReviewerAgent()
+    planner = PlannerAgent(memory=memory, executor=executor, reviewer=reviewer)
     coordinator = CoordinatorAgent(planner=planner, memory=memory)
 
     while True:

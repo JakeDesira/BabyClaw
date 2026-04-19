@@ -5,6 +5,7 @@ class MemoryAgent:
         """
         self.max_items = max_items
         self.short_term = []
+        self.facts = {} 
 
     def save_short_term(self, role: str, content: str) -> None:
         """
@@ -26,6 +27,31 @@ class MemoryAgent:
             f"{entry['role']}: {entry['content']}"
             for entry in self.short_term
         )
+    
+    def get_last_user_prompt(self) -> str:
+        for entry in reversed(self.short_term):
+            if entry["role"] == "user":
+                return entry["content"]
+            
+        return ""
+
+    def get_first_user_prompt(self) -> str:
+        for entry in self.short_term:
+            if entry["role"] == "user":
+                return entry["content"]
+        return ""
+    
+    def set_fact(self, key: str, value: str) -> None:
+        """
+        Store a simple user fact.
+        """
+        self.facts[key] = value
+
+    def get_fact(self, key: str) -> str:
+        """
+        Retrieve a stored user fact.
+        """
+        return self.facts.get(key, "")
 
     def clear_short_term(self) -> None:
         """

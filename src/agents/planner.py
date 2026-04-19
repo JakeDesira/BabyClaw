@@ -91,10 +91,36 @@ class PlannerAgent:
         """
         plan = self.create_plan(prompt)
 
-        return (
-            f"Generated plan:\n{plan['plan_text']}\n\n"
-            f"Needs memory: {plan['needs_memory']}\n"
-            f"Needs executor: {plan['needs_executor']}\n"
-            f"Needs review: {plan['needs_review']}"
+        lower_promt = prompt.lower()
+        context = ""
+        execution_result = ""
+
+        if plan["needs_memory"] and self.memory is not None:
+            if "first prompt" in lower_promt or "first thing i asked" in lower_promt:
+                context = self.memory.get_first_user_prompt()
+            elif "last prompt" in lower_promt or "last thing i asked" in lower_promt:
+                context = self.memory.get_last_user_prompt()
+            else:
+                context = self.memory.get_short_term_context()
+        
+        execution_result = ""
+        if plan["needs_executor"] and self.executor is not None:
+            execution_result = self.executor.handle(prompt)
+        
+        combined_result = (
+            f"Plan:\n{plan['plan_text']}\n\n"
+            f"Relevant context:\n{context if context else 'None'}\n\n"
+            f"Execution result:\n{execution_result if execution_result else 'None'}"
         )
+
+        if plan["needs_review"] and self.reviewer is not None:
+            return self.reviewer.handle(prompt, combined_result)
+        
+        if execution_result:
+            return execution_result
+        
+        if context:
+            return f"Using recent context, here is the result:\n\n{context}"
     
+        return f"Generated plan:\n\n{plan['plan_text']}"
+        

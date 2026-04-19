@@ -62,12 +62,19 @@ class CoordinatorAgent:
         if self.is_simple_question(prompt):
             short_term_context = self._get_short_term_context()
 
-            simple_user_prompt = (
-                f"Recent context:\n{short_term_context}\n\n"
-                f"Current user request:\n{prompt}"
+            simple_system_prompt = (
+                "You are the Coordinator Agent in a multi-agent AI assistant.\n"
+                "Use the recent conversation context to interpret follow-up questions correctly.\n"
+                "If the user says things like 'explain it simply' or 'how do you write that', \n"
+                "infer what 'it' or 'that' refers to from the recent context."
             )
 
-            response = self.client.ask(simple_user_prompt, temperature=0.2)
+            simple_user_prompt = (
+                f"Recent context:\n{short_term_context}\n\n"
+                f"User request:\n{prompt}"
+            )
+
+            response = self.client.ask(simple_user_prompt, system_prompt=simple_system_prompt, temperature=0.2)
 
         else:
             if self.planner is None:
