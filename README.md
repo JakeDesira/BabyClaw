@@ -1,7 +1,3 @@
-Yes — here’s a clean README draft you can adapt and paste into your repo.
-
----
-
 # Baby Claw
 
 Baby Claw is a lightweight local multi-agent AI assistant built in Python and designed to run through Ollama. It was developed as part of a university assignment with the goal of creating a clear and minimal architecture rather than a feature-heavy system.
@@ -239,5 +235,3 @@ The final implementation was guided not only by model quality, but also by devel
 The project is designed so that it can be run locally on one machine as intended by the assignment. The optional Mac-to-PC remote setup was added only for personal development convenience and does not change the core architecture of the system.
 
 ---
-
-If you want, I can turn this into an even more polished **final README with installation commands and usage examples**.
