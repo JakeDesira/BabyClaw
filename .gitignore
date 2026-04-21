@@ -2,3 +2,4 @@
 __pycache__/
 src/media_input/*
 !src/media_input/.gitkeep
+.DS_Store
