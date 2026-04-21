@@ -6,3 +6,5 @@
 - files should be stored in long term memory and retrieved for context
 - add image support
 - allow it to edit files with given access
+- Add gemma 4
+- update Design
