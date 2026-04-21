@@ -1,0 +1,8 @@
+- test for creative writing
+- reviewer is only set for planner
+- executor needs memory
+- Add long term memory
+- add support for multiple file processing
+- files should be stored in long term memory and retrieved for context
+- add image support
+- allow it to edit files with given access

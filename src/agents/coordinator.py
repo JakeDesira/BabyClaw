@@ -34,12 +34,16 @@ class CoordinatorAgent:
         short_term_context = self._get_short_term_context()
 
         classifier_system_prompt = (
-            "You are a routing assistant for a multi-agent AI system.\n"
-            "Your task is to classify the user's request.\n"
-            "Reply with only one word:\n"
-            "- SIMPLE -> if the request can be answered directly without planning, tools, or multi-step reasoning\n"
-            "- COMPLEX -> if the request needs planning, memory retrieval, file handling, or tool execution"
-        )
+        "You are a routing assistant for a multi-agent AI system.\n"
+        "Your task is to classify the user's request.\n"
+        "Reply with only one word: SIMPLE or COMPLEX.\n"
+        "Classify as COMPLEX if the request involves any of the following:\n"
+        "- reading, listing, summarising, explaining, processing, or selecting files\n"
+        "- tool use or command execution\n"
+        "- memory retrieval\n"
+        "- multi-step reasoning\n"
+        "Classify as SIMPLE only if the request can be answered directly without tools, memory, or planning."
+    )
 
         classifier_user_prompt = (
             f"Recent context:\n{short_term_context}\n\n"
@@ -49,7 +53,7 @@ class CoordinatorAgent:
         result = self.client.ask(
             prompt=classifier_user_prompt,
             system_prompt=classifier_system_prompt,
-            temperature=0.2
+            temperature=0.1
         ).strip().upper()
 
         return result.startswith("SIMPLE")

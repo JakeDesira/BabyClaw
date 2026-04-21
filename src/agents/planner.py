@@ -1,4 +1,5 @@
 from ollama_client import OllamaClient
+import tools
 
 
 class PlannerAgent:
@@ -40,18 +41,24 @@ class PlannerAgent:
             "MEMORY_ACTION: <memory action or NONE>\n"
             "MEMORY_INPUT: <memory input or NONE>\n"
             "ACTION: <tool name or NONE>\n"
-            "INPUT: <tool input or NONE>\n\n"
-            "Available executor actions are along with their rules:\n"
-            "- get_current_time - If no executor action is needed, set ACTION to NONE and INPUT to NONE\n"
-            "- list_input_files - If the user asks to list available files, use this action\n"
-            "- read_file - If the user asks to read a specific file, use this action and provide the filename in INPUT\n"
+            "INPUT: <tool input or NONE>\n"
+            "POST_PROCESS: YES/NO\n\n"
+            "Available executor actions and rules:\n"
+            "- get_current_time -> use when the user asks for the current time\n"
+            "- list_input_files -> use when the user asks to list available files\n"
+            "- read_file -> use when the user asks to read or summarise a file; if no filename is clear, set INPUT to NONE\n\n"
             "Available memory actions are along with their rules:\n"
             "- get_first_user_prompt - If the user asks about the first thing they asked\n"
             "- get_last_user_prompt - If the user asks about the last thing they asked\n"
-            "- get_short_term_context - If the user asks about the recent context\n\n"
-            "Other Rules:\n"
+            "- get_short_term_context - If the user asks about the recent context\n"
+            "- get_last_active_file_name - If the user asks which file was most recently read\n"
+            "- get_last_active_file_content - If the user refers to the most recently read file using words like 'it', 'that file', or 'the file'\n\n"
+            "Other rules:\n"
             "- If no memory action is needed, set MEMORY_ACTION to NONE and MEMORY_INPUT to NONE.\n"
-            "- If no executor action is needed, set ACTION to NONE and INPUT to NONE."
+            "- If no executor action is needed, set ACTION to NONE and INPUT to NONE.\n"
+            "- If the user asks to summarise, explain, process, or answer questions about a file, set POST_PROCESS to YES.\n"
+            "- If the user only wants the raw file contents shown, set POST_PROCESS to NO.\n"
+            "- For file selection, choose only from real available files when possible.\n"
         )
 
         context = self._get_context()
@@ -84,6 +91,7 @@ class PlannerAgent:
             "executor_input": "NONE",
             "memory_action": "NONE",
             "memory_input": "NONE",
+            "post_process": False
         }
 
         for line in raw_plan.splitlines():
@@ -105,8 +113,35 @@ class PlannerAgent:
                 result["memory_action"] = line.split(":", 1)[1].strip()
             elif upper_line.startswith("MEMORY_INPUT:"):
                 result["memory_input"] = line.split(":", 1)[1].strip()
+            elif upper_line.startswith("POST_PROCESS:"):
+                result["post_process"] = "YES" in upper_line
 
         return result
+
+
+
+    def _process_file_content(self, prompt: str, file_content: str) -> str:
+        """
+        Ask the model to process file content according to the user's request.
+        """
+        processing_system_prompt = (
+            "You are the Planner Agent in a lightweight multi-agent AI system.\n"
+            "The user has asked you to process the contents of a file.\n"
+            "Use the file content below to answer the user's request clearly and directly.\n"
+            "Do not repeat the raw file content unless necessary."
+        )
+
+        processing_user_prompt = (
+            f"User request:\n{prompt}\n\n"
+            f"File content:\n{file_content}"
+        )
+
+        return self.client.ask(
+            prompt=processing_user_prompt,
+            system_prompt=processing_system_prompt,
+            temperature=0.2,
+            think="medium"
+        )
 
 
     def handle(self, prompt: str) -> str:
@@ -125,10 +160,14 @@ class PlannerAgent:
             )
 
         if plan["needs_executor"] and self.executor is not None:
+            action = plan["executor_action"]
+            action_input = plan["executor_input"]
+
             execution_result = self.executor.handle(
-                plan["executor_action"],
-                plan["executor_input"]
-        )
+                action,
+                action_input,
+                prompt
+            )
 
         combined_result = (
             f"Plan:\n{plan['plan_text']}\n\n"
@@ -136,8 +175,20 @@ class PlannerAgent:
             f"Execution result:\n{execution_result if execution_result else 'None'}"
         )
 
-        if plan["needs_review"] and self.reviewer is not None:
+        if (
+            plan["needs_review"]
+            and self.reviewer is not None
+            and plan["executor_action"] != "read_file"
+        ):
             return self.reviewer.handle(prompt, combined_result)
+
+        if execution_result and plan["executor_action"] == "read_file":
+            if plan["post_process"]:
+                return self._process_file_content(prompt, execution_result)
+            return execution_result
+
+        if context and plan["memory_action"] == "get_last_active_file_content":
+            return self._process_file_content(prompt, context)
 
         if execution_result and context:
             return f"{context}\n{execution_result}"
