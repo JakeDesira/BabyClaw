@@ -5,7 +5,7 @@ class MemoryAgent:
         """
         self.max_items = max_items
         self.short_term = []
-        self.facts = {} 
+
 
     def save_short_term(self, role: str, content: str) -> None:
         """
@@ -15,6 +15,7 @@ class MemoryAgent:
 
         if len(self.short_term) > self.max_items:
             self.short_term = self.short_term[-self.max_items:]
+
 
     def get_short_term_context(self) -> str:
         """
@@ -28,6 +29,7 @@ class MemoryAgent:
             for entry in self.short_term
         )
     
+
     def get_last_user_prompt(self) -> str:
         for entry in reversed(self.short_term):
             if entry["role"] == "user":
@@ -35,26 +37,34 @@ class MemoryAgent:
             
         return ""
 
+
     def get_first_user_prompt(self) -> str:
         for entry in self.short_term:
             if entry["role"] == "user":
                 return entry["content"]
         return ""
-    
-    def set_fact(self, key: str, value: str) -> None:
-        """
-        Store a simple user fact.
-        """
-        self.facts[key] = value
 
-    def get_fact(self, key: str) -> str:
-        """
-        Retrieve a stored user fact.
-        """
-        return self.facts.get(key, "")
 
     def clear_short_term(self) -> None:
         """
         Clear short-term memory.
         """
         self.short_term.clear()
+
+
+    def handle(self, action: str, action_input: str = "") -> str:
+        """
+        Handle memory-related actions.
+        """
+        if action == "get_first_user_prompt":   
+            return self.get_first_user_prompt()
+
+        if action == "get_last_user_prompt":
+            return self.get_last_user_prompt()
+
+        if action == "get_short_term_context":
+            return self.get_short_term_context()
+
+        return f"Memory could not find a supported action for '{action}'."
+
+

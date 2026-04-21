@@ -24,7 +24,8 @@ class CoordinatorAgent:
             return self.memory.get_short_term_context()
         except AttributeError:
             return ""
-
+    
+    
     def is_simple_question(self, prompt: str) -> bool:
         """
         Use the model to classify whether the user request is a simple question
@@ -45,7 +46,11 @@ class CoordinatorAgent:
             f"User request:\n{prompt}"
         )
 
-        result = self.client.ask(prompt=classifier_user_prompt,system_prompt=classifier_system_prompt,temperature=0.1).strip().upper()
+        result = self.client.ask(
+            prompt=classifier_user_prompt,
+            system_prompt=classifier_system_prompt,
+            temperature=0.2
+        ).strip().upper()
 
         return result.startswith("SIMPLE")
 
@@ -74,7 +79,11 @@ class CoordinatorAgent:
                 f"User request:\n{prompt}"
             )
 
-            response = self.client.ask(simple_user_prompt, system_prompt=simple_system_prompt, temperature=0.2)
+            response = self.client.ask(
+                prompt=simple_user_prompt, 
+                system_prompt=simple_system_prompt, 
+                temperature=0.2
+            )
 
         else:
             if self.planner is None:

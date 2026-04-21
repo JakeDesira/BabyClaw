@@ -32,15 +32,26 @@ class PlannerAgent:
         planner_system_prompt = (
             "You are the Planner Agent in a lightweight multi-agent AI system.\n"
             "Break the user's request into clear subtasks.\n"
-            "Then answer these three questions strictly with YES or NO:\n"
-            "1. Does this task need memory/context retrieval?\n"
-            "2. Does this task need executor/tool use?\n"
-            "3. Does this task need review/checking?\n\n"
-            "Return your answer in this exact format:\n"
+            "Then answer these fields strictly in this exact format:\n"
             "PLAN: <your structured plan>\n"
             "MEMORY: YES/NO\n"
             "EXECUTOR: YES/NO\n"
-            "REVIEW: YES/NO"
+            "REVIEW: YES/NO\n"
+            "MEMORY_ACTION: <memory action or NONE>\n"
+            "MEMORY_INPUT: <memory input or NONE>\n"
+            "ACTION: <tool name or NONE>\n"
+            "INPUT: <tool input or NONE>\n\n"
+            "Available executor actions are along with their rules:\n"
+            "- get_current_time - If no executor action is needed, set ACTION to NONE and INPUT to NONE\n"
+            "- list_input_files - If the user asks to list available files, use this action\n"
+            "- read_file - If the user asks to read a specific file, use this action and provide the filename in INPUT\n"
+            "Available memory actions are along with their rules:\n"
+            "- get_first_user_prompt - If the user asks about the first thing they asked\n"
+            "- get_last_user_prompt - If the user asks about the last thing they asked\n"
+            "- get_short_term_context - If the user asks about the recent context\n\n"
+            "Other Rules:\n"
+            "- If no memory action is needed, set MEMORY_ACTION to NONE and MEMORY_INPUT to NONE.\n"
+            "- If no executor action is needed, set ACTION to NONE and INPUT to NONE."
         )
 
         context = self._get_context()
@@ -59,16 +70,20 @@ class PlannerAgent:
     
         return self._parse_plan(raw_plan)
     
+
     def _parse_plan(self, raw_plan: str) -> dict:
         """
         Parse the planner output into a structured dictionary.        
         """
-
         result = {
             "plan_text": raw_plan,
             "needs_memory": False,
             "needs_executor": False,
-            "needs_review": False
+            "needs_review": False,
+            "executor_action": "NONE",
+            "executor_input": "NONE",
+            "memory_action": "NONE",
+            "memory_input": "NONE",
         }
 
         for line in raw_plan.splitlines():
@@ -82,8 +97,17 @@ class PlannerAgent:
                 result["needs_review"] = "YES" in upper_line
             elif upper_line.startswith("PLAN:"):
                 result["plan_text"] = line.split(":", 1)[1].strip()
+            elif upper_line.startswith("ACTION:"):
+                result["executor_action"] = line.split(":", 1)[1].strip()
+            elif upper_line.startswith("INPUT:"):
+                result["executor_input"] = line.split(":", 1)[1].strip()
+            elif upper_line.startswith("MEMORY_ACTION:"):
+                result["memory_action"] = line.split(":", 1)[1].strip()
+            elif upper_line.startswith("MEMORY_INPUT:"):
+                result["memory_input"] = line.split(":", 1)[1].strip()
 
         return result
+
 
     def handle(self, prompt: str) -> str:
         """
@@ -91,22 +115,21 @@ class PlannerAgent:
         """
         plan = self.create_plan(prompt)
 
-        lower_promt = prompt.lower()
         context = ""
         execution_result = ""
 
         if plan["needs_memory"] and self.memory is not None:
-            if "first prompt" in lower_promt or "first thing i asked" in lower_promt:
-                context = self.memory.get_first_user_prompt()
-            elif "last prompt" in lower_promt or "last thing i asked" in lower_promt:
-                context = self.memory.get_last_user_prompt()
-            else:
-                context = self.memory.get_short_term_context()
-        
-        execution_result = ""
+            context = self.memory.handle(
+                plan["memory_action"],
+                plan["memory_input"]
+            )
+
         if plan["needs_executor"] and self.executor is not None:
-            execution_result = self.executor.handle(prompt)
-        
+            execution_result = self.executor.handle(
+                plan["executor_action"],
+                plan["executor_input"]
+        )
+
         combined_result = (
             f"Plan:\n{plan['plan_text']}\n\n"
             f"Relevant context:\n{context if context else 'None'}\n\n"
@@ -115,12 +138,15 @@ class PlannerAgent:
 
         if plan["needs_review"] and self.reviewer is not None:
             return self.reviewer.handle(prompt, combined_result)
-        
+
+        if execution_result and context:
+            return f"{context}\n{execution_result}"
+
         if execution_result:
             return execution_result
-        
+
         if context:
-            return f"Using recent context, here is the result:\n\n{context}"
-    
+            return context
+
         return f"Generated plan:\n\n{plan['plan_text']}"
-        
+            

@@ -1,25 +1,28 @@
-from tools import get_current_time, list_directory, read_file
+import tools
 
 
 class ExecutorAgent:
     def __init__(self, memory=None):
         self.memory = memory
 
-    def handle(self, prompt: str) -> str:
-        lower_prompt = prompt.lower()
+    def handle(self, action: str, action_input: str = "") -> str:
+        if action == "get_current_time":
+            return f"The current time is {tools.get_current_time()}."
 
-        # NOTE: This is a very basic implementation just to demonstrate the concept.
-        if "current time" in lower_prompt or "record the current time" in lower_prompt or "what is the time" in lower_prompt:
-            timezone_name = "UTC"
+        if action == "list_input_files":
+            files = tools.list_input_files()
+            if not files:
+                return "There are no files in the input directory."
+            return "Available files:\n" + "\n".join(files)
 
-            if self.memory is not None:
-                stored_timezone = self.memory.get_fact("timezone")
-                if stored_timezone:
-                    timezone_name = stored_timezone
+        if action == "read_file":
+            if not action_input or action_input == "NONE":
+                return "Error: No filename was provided."
 
-            return f"The current time is {get_current_time(timezone_name)}."
+            file_path = tools.find_file_in_input(action_input)
+            if file_path is None:
+                return f"Error: Could not find '{action_input}' in the input directory."
 
-        if "list files" in lower_prompt or "list directory" in lower_prompt:
-            return list_directory()
+            return tools.read_file(file_path)
 
-        return "Executor could not find a supported action for this task yet."
+        return f"Executor could not find a supported action for '{action}'."
