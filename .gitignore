@@ -1,2 +1,4 @@
 .vscode
 __pycache__/
+src/media_input/*
+!src/media_input/.gitkeep
