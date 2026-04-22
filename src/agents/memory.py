@@ -1,3 +1,6 @@
+from pathlib import Path
+
+
 class MemoryAgent:
     def __init__(self, max_items: int = 10):
         """
@@ -6,8 +9,14 @@ class MemoryAgent:
         """
         self.max_items = max_items
         self.short_term = []
+
         self.last_active_file_name = ""
         self.last_active_file_content = ""
+        self.last_active_file_type = ""
+
+        self.previous_active_file_name = ""
+        self.previous_active_file_content = ""
+        self.previous_active_file_type = ""
 
 
     def save_short_term(self, role: str, content: str) -> None:
@@ -66,25 +75,36 @@ class MemoryAgent:
         """
         Store the most recently read file and its content.
         """
+        if self.last_active_file_name:
+            self.previous_active_file_name = self.last_active_file_name
+            self.previous_active_file_content = self.last_active_file_content
+            self.previous_active_file_type = self.last_active_file_type
+
         self.last_active_file_name = filename
         self.last_active_file_content = content
+        self.last_active_file_type = Path(filename).suffix.lower()
 
 
     def get_last_active_file_name(self) -> str:
-        """
-        Return the filename of the most recently read file.
-        """
         return self.last_active_file_name
 
-
     def get_last_active_file_content(self) -> str:
-        """
-        Return the content of the most recently read file.
-        """
         return self.last_active_file_content
 
+    def get_last_active_file_type(self) -> str:
+        return self.last_active_file_type
 
-    def handle(self, action: str, action_input: str = "") -> str:
+    def get_previous_active_file_name(self) -> str:
+        return self.previous_active_file_name
+
+    def get_previous_active_file_content(self) -> str:
+        return self.previous_active_file_content
+
+    def get_previous_active_file_type(self) -> str:
+        return self.previous_active_file_type
+
+
+    def handle(self, action: str) -> str:
         """
         Handle memory-related actions.
         """
@@ -102,5 +122,11 @@ class MemoryAgent:
 
         if action == "get_last_active_file_content":
             return self.get_last_active_file_content()
+
+        if action == "get_previous_active_file_name":
+            return self.get_previous_active_file_name()
+
+        if action == "get_previous_active_file_content":
+            return self.get_previous_active_file_content()
 
         return f"Memory could not find a supported action for '{action}'."

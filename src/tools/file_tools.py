@@ -1,9 +1,11 @@
+import re
 from pathlib import Path
 from pypdf import PdfReader
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 INPUT_DIR = BASE_DIR / "media_input"
+
 
 def list_input_files():
     """
@@ -12,7 +14,7 @@ def list_input_files():
     """
     if not INPUT_DIR.exists():
         return []
-    
+
     return sorted(
         file.name
         for file in INPUT_DIR.iterdir()
@@ -20,17 +22,32 @@ def list_input_files():
     )
 
 
+def _normalize_query(text: str) -> str:
+    """
+    Normalize a prompt/file query for looser matching.
+    """
+    text = text.lower().strip()
+    text = re.sub(r"[^\w\s.-]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def find_file_in_input(filename: str) -> Path | None:
     """
     Find a file in the input directory using:
-    1. exact match
-    2. case-insensitive exact match
-    3. loose normalized matching
+    1. exact path match
+    2. case-insensitive exact filename match
+    3. exact stem match
+    4. extension-aware loose matching
+    Important rule:
+    If the query includes an extension, only files with that same extension
+    may be matched.
     """
     if not INPUT_DIR.exists():
         return None
 
     query = filename.strip()
+
     if not query:
         return None
 
@@ -38,35 +55,50 @@ def find_file_in_input(filename: str) -> Path | None:
     if exact_match.exists() and exact_match.is_file():
         return exact_match
 
-    query_lower = query.lower()
+    query_path = Path(query)
+    query_name = query_path.name
+    query_suffix = query_path.suffix.lower()
+    query_stem = query_path.stem
+    query_name_normalized = _normalize_query(query_name)
+    query_stem_normalized = _normalize_query(query_stem)
 
-    for file in INPUT_DIR.iterdir():
-        if file.is_file() and file.name.lower() == query_lower:
+    files = [file for file in INPUT_DIR.iterdir() if file.is_file()]
+
+    # 1. Case-insensitive exact filename match
+    for file in files:
+        if file.name.lower() == query_name.lower():
             return file
 
-    normalized_query = query_lower
-    for token in [
-        "read ", "open ", "summarise ", "summarize ", "process ",
-        "the ", " file", " pdf", " text", " txt"
-    ]:
-        normalized_query = normalized_query.replace(token, "")
-    normalized_query = normalized_query.strip()
+    # 2. Exact stem match, but respect extension if supplied
+    for file in files:
+        if query_suffix and file.suffix.lower() != query_suffix:
+            continue
+        if _normalize_query(file.stem) == query_stem_normalized:
+            return file
 
-    for file in INPUT_DIR.iterdir():
-        if not file.is_file():
+    # 3. Loose matching, but extension-aware if supplied
+    candidates = []
+    for file in files:
+        if query_suffix and file.suffix.lower() != query_suffix:
             continue
 
-        file_name = file.name.lower()
-        file_stem = file.stem.lower()
+        file_name_normalized = _normalize_query(file.name)
+        file_stem_normalized = _normalize_query(file.stem)
 
-        if normalized_query == file_stem:
-            return file
+        if query_name_normalized in file_name_normalized:
+            candidates.append(file)
+            continue
 
-        if normalized_query in file_stem or file_stem in normalized_query:
-            return file
+        if query_stem_normalized in file_stem_normalized:
+            candidates.append(file)
+            continue
 
-        if normalized_query in file_name:
-            return file
+        if file_stem_normalized in query_stem_normalized:
+            candidates.append(file)
+            continue
+
+    if len(candidates) == 1:
+        return candidates[0]
 
     return None
 
@@ -89,8 +121,7 @@ def get_input_files_by_extension(extensions: set[str]) -> list[Path]:
 
 def get_single_obvious_file(prompt: str) -> Path | None:
     """
-    Try to choose a single obvious file deterministically from the input directory
-    based on the user's wording.
+    Try to choose a single obvious file deterministically from the input directory.
     """
     if not INPUT_DIR.exists():
         return None
@@ -111,7 +142,6 @@ def get_single_obvious_file(prompt: str) -> Path | None:
         return text_files[0]
 
     return None
-
 
 
 def read_text_file(path):
@@ -170,11 +200,7 @@ def read_pdf_file(path):
 
 def read_file(path: str) -> str:
     """
-    Read a file based on its extension
-
-    Supported types:
-    - text-like files (.txt, .md, .csv, .json, .py, .html, .css, .js)
-    - PDF files (.pdf)
+    Read a file based on its extension.
     """
     file_path = Path(path)
 
@@ -183,36 +209,13 @@ def read_file(path: str) -> str:
 
     if not file_path.is_file():
         return f"Error: '{path}' is not a file."
-    
-    suffix = file_path.suffix.lower()
 
+    suffix = file_path.suffix.lower()
     text_extensions = {".txt", ".md", ".csv", ".json", ".py", ".html", ".css", ".js"}
 
     if suffix in text_extensions:
         return read_text_file(file_path)
-    elif suffix == ".pdf":
+    if suffix == ".pdf":
         return read_pdf_file(file_path)
-    
+
     return f"Error: Unsupported file type '{suffix or 'unknown'}' is not supported yet."
-
-
-def list_directory(path: str = ".") -> str:
-    """
-    Return the contents of a directory as a newline-separated string.
-    This is used by the Executor Agent to inspect safe working directories,
-    such as the input folder, and report available files back to the user.
-    """
-    dir_path = Path(path)
-
-    if not dir_path.exists():
-        return f"Error: Directory '{path}' does not exist."
-
-    if not dir_path.is_dir():
-        return f"Error: '{path}' is not a directory."
-
-    try:
-        items = sorted(item.name for item in dir_path.iterdir())
-        return "\n".join(items) if items else "(empty directory)"
-    except Exception as e:
-        return f"Error listing directory '{path}': {e}"
-    

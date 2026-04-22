@@ -16,9 +16,13 @@ class ExecutorAgent:
             return "Available files:\n" + "\n".join(files)
 
         if action == "read_file":
-            # 1. Try explicit action_input first
+            lower_prompt = original_prompt.lower().strip()
+
+            # 1. Explicit filename first
             if action_input and action_input != "NONE":
                 file_path = tools.find_file_in_input(action_input)
+                #
+                print(f"[EXECUTOR DEBUG] Explicit file match: {file_path}")
                 if file_path is not None:
                     file_content = tools.read_file(file_path)
 
@@ -31,17 +35,20 @@ class ExecutorAgent:
 
                     return file_content
 
-            # 2. If the user refers vaguely to the previously active file, reuse it
+            # 2. Follow-up references to currently active file
             if self.memory is not None:
                 last_file_name = self.memory.get_last_active_file_name()
                 last_file_content = self.memory.get_last_active_file_content()
+                #
+                print(f"[EXECUTOR DEBUG] Active file candidate: {last_file_name}")
 
-                vague_prompt = original_prompt.lower().strip()
-                vague_phrases = {
-                    "read the file",
+                current_file_phrases = {
                     "read it",
+                    "read the file",
                     "open it",
                     "open the file",
+                    "show it",
+                    "show the file",
                     "process it",
                     "summarise it",
                     "summarize it",
@@ -50,12 +57,27 @@ class ExecutorAgent:
                     "what does the file say",
                 }
 
-                if vague_prompt in vague_phrases and last_file_name and last_file_content:
+                if lower_prompt in current_file_phrases and last_file_name and last_file_content:
+                    print(f"[EXECUTOR DEBUG] Actually reusing active file: {last_file_name}")
                     return last_file_content
 
-            # 3. Deterministic fallback: choose a single obvious file
+            # 3. "Other file" support
+            if self.memory is not None:
+                previous_file_name = self.memory.get_previous_active_file_name()
+                previous_file_content = self.memory.get_previous_active_file_content()
+
+                if "other file" in lower_prompt and previous_file_name and previous_file_content:
+                    #
+                    print(f"[EXECUTOR DEBUG] Switching to previous file: {previous_file_name}")
+                    # Promote previous to active when user explicitly switches to it
+                    self.memory.set_last_active_file(previous_file_name, previous_file_content)
+                    return previous_file_content
+
+            # 4. Deterministic obvious-file fallback
             obvious_file = tools.get_single_obvious_file(original_prompt)
             if obvious_file is not None:
+                #
+                print(f"[EXECUTOR DEBUG] Obvious file fallback: {obvious_file}")
                 file_content = tools.read_file(obvious_file)
 
                 if (
@@ -67,7 +89,9 @@ class ExecutorAgent:
 
                 return file_content
 
-            # 4. Final fallback: ask user to choose
+            # 5. Final clarification
+            #
+            print("[EXECUTOR DEBUG] Could not resolve file, asking user to specify")
             files = tools.list_input_files()
             if not files:
                 return "There are no files in the input directory."
