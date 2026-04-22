@@ -219,3 +219,23 @@ def read_file(path: str) -> str:
         return read_pdf_file(file_path)
 
     return f"Error: Unsupported file type '{suffix or 'unknown'}' is not supported yet."
+
+def read_multiple_files(filenames: list[str]) -> str:
+    """
+    Read multiple files and return their contents clearly labelled.
+    """
+    results = []
+    not_found = []
+
+    for name in filenames:
+        path = find_file_in_input(name.strip())
+        if path is not None:
+            content = read_file(path)
+            results.append(f"=== {path.name} ===\n{content}")
+        else:
+            not_found.append(name.strip())
+
+    if not_found:
+        results.append(f"Could not find: {', '.join(not_found)}")
+
+    return "\n\n".join(results) if results else "None of the specified files could be found."

@@ -97,5 +97,32 @@ class ExecutorAgent:
                 return "There are no files in the input directory."
 
             return "Please specify which file to read. Available files:\n" + "\n".join(files)
+        
+        if action == "read_multiple_files":
+            filenames = [f.strip() for f in action_input.split(",") if f.strip() and f.strip() != "NONE"]
+            
+            if not filenames:
+                return "No filenames provided for read_multiple_files."
+
+            results = []
+            last_found_path = None
+
+            for name in filenames:
+                path = tools.find_file_in_input(name)
+                print(f"[EXECUTOR DEBUG] Multi-file match for '{name}': {path}")
+                if path is not None:
+                    content = tools.read_file(path)
+                    results.append(f"=== {path.name} ===\n{content}")
+                    if (
+                        self.memory is not None
+                        and not content.startswith("Error:")
+                        and not content.startswith("Warning:")
+                    ):
+                        self.memory.set_last_active_file(path.name, content)
+                    last_found_path = path
+                else:
+                    results.append(f"=== {name} ===\nError: File not found.")
+
+            return "\n\n".join(results) if results else "None of the specified files could be found."
 
         return f"Executor could not find a supported action for '{action}'."

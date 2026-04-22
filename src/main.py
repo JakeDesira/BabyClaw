@@ -2,11 +2,14 @@ import agents
 
 
 def main() -> None:
+    planning_model = "gemma4"
+    reasoning_model = "gpt-oss:20b"
+
     memory = agents.MemoryAgent()
     executor = agents.ExecutorAgent(memory=memory)
-    reviewer = agents.ReviewerAgent()
-    planner = agents.PlannerAgent(memory=memory, executor=executor, reviewer=reviewer)
-    coordinator = agents.CoordinatorAgent(planner=planner, memory=memory)
+    reviewer = agents.ReviewerAgent(model=reasoning_model)
+    planner = agents.PlannerAgent(memory=memory, executor=executor, reviewer=reviewer, planning_model=planning_model, reasoning_model=reasoning_model, debug=True)
+    coordinator = agents.CoordinatorAgent(planner=planner, memory=memory, model=planning_model)
 
     while True:
         prompt = input("You: ").strip()
