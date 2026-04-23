@@ -1,10 +1,16 @@
+Others:
 - test for creative writing
+- update Design
+- Restructure the code a bit
 - reviewer is only set for planner
+
+
+
+Requirements:
 - executor needs memory
 - Add long term memory
-- add support for multiple file processing
 - files should be stored in long term memory and retrieved for context
-- add image support
+- check about image support
 - allow it to edit files with given access
-- Add gemma 4
-- update Design
+- Add whatsapp capability
+- use a dict for structure

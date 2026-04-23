@@ -1,13 +1,15 @@
 import re
 from pathlib import Path
+
 from pypdf import PdfReader
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 INPUT_DIR = BASE_DIR / "media_input"
+TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".py", ".html", ".css", ".js"}
 
 
-def list_input_files():
+def list_input_files() -> list[str]:
     """
     Return a sorted list of file names inside the input directory.
     Only files are returned, not subdirectories.
@@ -39,6 +41,7 @@ def find_file_in_input(filename: str) -> Path | None:
     2. case-insensitive exact filename match
     3. exact stem match
     4. extension-aware loose matching
+
     Important rule:
     If the query includes an extension, only files with that same extension
     may be matched.
@@ -64,20 +67,18 @@ def find_file_in_input(filename: str) -> Path | None:
 
     files = [file for file in INPUT_DIR.iterdir() if file.is_file()]
 
-    # 1. Case-insensitive exact filename match
     for file in files:
         if file.name.lower() == query_name.lower():
             return file
 
-    # 2. Exact stem match, but respect extension if supplied
     for file in files:
         if query_suffix and file.suffix.lower() != query_suffix:
             continue
         if _normalize_query(file.stem) == query_stem_normalized:
             return file
 
-    # 3. Loose matching, but extension-aware if supplied
     candidates = []
+
     for file in files:
         if query_suffix and file.suffix.lower() != query_suffix:
             continue
@@ -133,18 +134,18 @@ def get_single_obvious_file(prompt: str) -> Path | None:
     lower_prompt = prompt.lower()
 
     pdf_files = get_input_files_by_extension({".pdf"})
-    text_files = get_input_files_by_extension({".txt", ".md", ".csv", ".json", ".py", ".html", ".css", ".js"})
+    text_files = get_input_files_by_extension(TEXT_EXTENSIONS)
 
     if "pdf" in lower_prompt and len(pdf_files) == 1:
         return pdf_files[0]
 
-    if ("text file" in lower_prompt or "txt file" in lower_prompt or "text" in lower_prompt) and len(text_files) == 1:
+    if ("text file" in lower_prompt or "txt file" in lower_prompt) and len(text_files) == 1:
         return text_files[0]
 
     return None
 
 
-def read_text_file(path):
+def read_text_file(path: str | Path) -> str:
     """
     Read a plain text file and return its content.
     """
@@ -162,7 +163,7 @@ def read_text_file(path):
         return f"Error reading text file '{path}': {e}"
 
 
-def read_pdf_file(path):
+def read_pdf_file(path: str | Path) -> str:
     """
     Read a PDF file and return its extracted text content.
     """
@@ -182,9 +183,7 @@ def read_pdf_file(path):
             page_text = page.extract_text()
 
             if page_text and page_text.strip():
-                extracted_pages.append(
-                    f"--- Page {page_number} ---\n{page_text.strip()}"
-                )
+                extracted_pages.append(f"--- Page {page_number} ---\n{page_text.strip()}")
 
         if not extracted_pages:
             return (
@@ -198,7 +197,7 @@ def read_pdf_file(path):
         return f"Error reading PDF file '{file_path.name}': {e}"
 
 
-def read_file(path: str) -> str:
+def read_file(path: str | Path) -> str:
     """
     Read a file based on its extension.
     """
@@ -211,14 +210,15 @@ def read_file(path: str) -> str:
         return f"Error: '{path}' is not a file."
 
     suffix = file_path.suffix.lower()
-    text_extensions = {".txt", ".md", ".csv", ".json", ".py", ".html", ".css", ".js"}
 
-    if suffix in text_extensions:
+    if suffix in TEXT_EXTENSIONS:
         return read_text_file(file_path)
+
     if suffix == ".pdf":
         return read_pdf_file(file_path)
 
     return f"Error: Unsupported file type '{suffix or 'unknown'}' is not supported yet."
+
 
 def read_multiple_files(filenames: list[str]) -> str:
     """
@@ -229,6 +229,7 @@ def read_multiple_files(filenames: list[str]) -> str:
 
     for name in filenames:
         path = find_file_in_input(name.strip())
+
         if path is not None:
             content = read_file(path)
             results.append(f"=== {path.name} ===\n{content}")

@@ -8,7 +8,7 @@ class MemoryAgent:
         Also stores the last active file and its content.
         """
         self.max_items = max_items
-        self.short_term = []
+        self.short_term: list[dict[str, str]] = []
 
         self.last_active_file_name = ""
         self.last_active_file_content = ""
@@ -18,16 +18,28 @@ class MemoryAgent:
         self.previous_active_file_content = ""
         self.previous_active_file_type = ""
 
-
     def save_short_term(self, role: str, content: str) -> None:
         """
         Save a short-term memory entry.
         """
-        self.short_term.append({"role": role, "content": content})
+        cleaned_content = content.strip()
+
+        debug_prefixes = (
+            "[COORDINATOR DEBUG]",
+            "[PLANNER DEBUG]",
+            "[PLAN EXECUTOR DEBUG]",
+            "[RESPONSE GENERATOR DEBUG]",
+            "[REVIEWER DEBUG]",
+            "[EXECUTOR DEBUG]",
+        )
+
+        if cleaned_content.startswith(debug_prefixes):
+            return
+
+        self.short_term.append({"role": role, "content": cleaned_content})
 
         if len(self.short_term) > self.max_items:
             self.short_term = self.short_term[-self.max_items:]
-
 
     def get_short_term_context(self) -> str:
         """
@@ -41,7 +53,6 @@ class MemoryAgent:
             for entry in self.short_term
         )
 
-
     def get_last_user_prompt(self) -> str:
         """
         Return the most recent user prompt.
@@ -51,7 +62,6 @@ class MemoryAgent:
                 return entry["content"]
 
         return ""
-
 
     def get_first_user_prompt(self) -> str:
         """
@@ -63,17 +73,15 @@ class MemoryAgent:
 
         return ""
 
-
     def clear_short_term(self) -> None:
         """
         Clear short-term memory.
         """
         self.short_term.clear()
 
-
     def set_last_active_file(self, filename: str, content: str) -> None:
         """
-        Store the most recently read file and its content.
+        Store the most recently active file and its content.
         """
         if self.last_active_file_name:
             self.previous_active_file_name = self.last_active_file_name
@@ -83,7 +91,6 @@ class MemoryAgent:
         self.last_active_file_name = filename
         self.last_active_file_content = content
         self.last_active_file_type = Path(filename).suffix.lower()
-
 
     def get_last_active_file_name(self) -> str:
         return self.last_active_file_name
@@ -102,7 +109,6 @@ class MemoryAgent:
 
     def get_previous_active_file_type(self) -> str:
         return self.previous_active_file_type
-
 
     def handle(self, action: str) -> str:
         """
@@ -123,10 +129,16 @@ class MemoryAgent:
         if action == "get_last_active_file_content":
             return self.get_last_active_file_content()
 
+        if action == "get_last_active_file_type":
+            return self.get_last_active_file_type()
+
         if action == "get_previous_active_file_name":
             return self.get_previous_active_file_name()
 
         if action == "get_previous_active_file_content":
             return self.get_previous_active_file_content()
+
+        if action == "get_previous_active_file_type":
+            return self.get_previous_active_file_type()
 
         return f"Memory could not find a supported action for '{action}'."

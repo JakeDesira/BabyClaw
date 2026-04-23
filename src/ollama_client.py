@@ -49,8 +49,4 @@ class OllamaClient:
             response = self.client.chat(**request_args)
             return response["message"]["content"]
         except Exception as e:
-            return f"Error communicating with Ollama: {e}"
-        
-    # Asking model with images or/and files
-    def ask_multi_modal(self):
-        pass
+            return {"ok": False, "error": str(e)}

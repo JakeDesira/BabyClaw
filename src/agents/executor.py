@@ -1,9 +1,13 @@
+import shutil
+from pathlib import Path
 import tools
 
 
 class ExecutorAgent:
-    def __init__(self, memory=None):
+    def __init__(self, memory=None, filesystem_guard=None):
         self.memory = memory
+        self.filesystem_guard = filesystem_guard
+
 
     def handle(self, action: str, action_input: str = "", original_prompt: str = "") -> str:
         if action == "get_current_time":
@@ -125,4 +129,150 @@ class ExecutorAgent:
 
             return "\n\n".join(results) if results else "None of the specified files could be found."
 
+        if action == "list_directory":
+            safe = self.filesystem_guard.safe_path(action_input)
+            if safe is None:
+                return f"Access denied. '{action_input}' is not within an approved directory."
+            if not safe.is_dir():
+                return f"'{action_input}' is not a directory."
+            files = sorted(safe.iterdir())
+            if not files:
+                return "Directory is empty."
+            return "Contents:\n" + "\n".join(
+                f"{'[DIR]' if f.is_dir() else '[FILE]'} {f.name}" for f in files
+            )
+
+        if action == "view_file":
+            safe = self.filesystem_guard.safe_path(action_input)
+            if safe is None:
+                return f"Access denied. '{action_input}' is not within an approved directory."
+            return tools.read_file(safe)
+
+        if action == "create_file":
+            # action_input format: "filepath::content"
+            parts = action_input.split("::", 1)
+            if len(parts) != 2:
+                return "Error: create_file requires 'filepath::content' format."
+            filepath, content = parts
+            safe = self.filesystem_guard.safe_path(filepath)
+            if safe is None:
+                return f"Access denied. '{filepath}' is not within an approved directory."
+            try:
+                safe.parent.mkdir(parents=True, exist_ok=True)
+                safe.write_text(content, encoding="utf-8")
+                return f"File created: {safe}"
+            except Exception as e:
+                return f"Error creating file: {e}"
+
+        if action == "append_file":
+            parts = action_input.split("::", 1)
+            if len(parts) != 2:
+                return "Error: append_file requires 'filepath::content' format."
+            filepath, content = parts
+            safe = self.filesystem_guard.safe_path(filepath)
+            if safe is None:
+                return f"Access denied. '{filepath}' is not within an approved directory."
+            try:
+                with open(safe, "a", encoding="utf-8") as f:
+                    f.write(content)
+                return f"Content appended to: {safe}"
+            except Exception as e:
+                return f"Error appending to file: {e}"
+
+        if action == "delete_file":
+            safe = self.filesystem_guard.safe_path(action_input)
+            if safe is None:
+                return f"Access denied. '{action_input}' is not within an approved directory."
+            if not safe.exists():
+                return f"File not found: {action_input}"
+            try:
+                safe.unlink()
+                return f"File deleted: {safe}"
+            except Exception as e:
+                return f"Error deleting file: {e}"
+            
+        if action == "edit_file":
+            # action_input format: "filepath::improvement_instruction"
+            parts = action_input.split("::", 1)
+            if len(parts) != 2:
+                return "Error: edit_file requires 'filepath::instruction' format."
+            filepath, instruction = parts
+            safe = self.filesystem_guard.safe_path(filepath)
+            if safe is None:
+                return f"Access denied. '{filepath}' is not within an approved directory."
+            try:
+                existing_content = safe.read_text(encoding="utf-8")
+                return f"EDIT_READY::{filepath}::{instruction}::{existing_content}"
+            except Exception as e:
+                return f"Error reading file for editing: {e}"
+            
+        if action == "create_directory":
+            safe = self.filesystem_guard.safe_path(action_input)
+            if safe is None:
+                return f"Access denied. '{action_input}' is not within an approved directory."
+
+            try:
+                safe.mkdir(parents=True, exist_ok=True)
+                return f"Directory created: {safe}"
+            except Exception as e:
+                    return f"Error creating directory: {e}"
+
+        if action == "move_path":
+            parts = action_input.split("::", 1)
+
+            if len(parts) != 2:
+                if ":" in action_input:
+                    source_raw, destination_raw = action_input.split(":", 1)
+                else:
+                    return "Error: move_path requires 'source::destination' format."
+            else:
+                source_raw, destination_raw = parts
+
+            source_raw = source_raw.strip()
+            destination_raw = destination_raw.strip()
+
+            source = self.filesystem_guard.safe_path(source_raw)
+            destination = self.filesystem_guard.safe_path(destination_raw)
+
+            if source is None:
+                return f"Access denied. '{source_raw}' is not within an approved directory."
+
+            if destination is None:
+                return f"Access denied. '{destination_raw}' is not within an approved directory."
+
+            if not source.exists():
+                return f"Source not found: {source}"
+
+            try:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(source), str(destination))
+                return f"Moved: {source} -> {destination}"
+            except Exception as e:
+                return f"Error moving path: {e}"
+
+        if action == "rename_path":
+            parts = action_input.split("::", 1)
+            if len(parts) != 2:
+                return "Error: rename_path requires 'source::new_name' format."
+
+            source_raw, new_name = parts
+            source = self.filesystem_guard.safe_path(source_raw)
+
+            if source is None:
+                return f"Access denied. '{source_raw}' is not within an approved directory."
+
+            if not source.exists():
+                return f"Path not found: {source}"
+
+            destination = source.with_name(new_name.strip())
+
+            if not self.filesystem_guard.is_approved(destination):
+                return f"Access denied. '{destination}' is not within an approved directory."
+
+            try:
+                source.rename(destination)
+                return f"Renamed: {source} -> {destination}"
+            except Exception as e:
+                return f"Error renaming path: {e}"
+            
         return f"Executor could not find a supported action for '{action}'."
