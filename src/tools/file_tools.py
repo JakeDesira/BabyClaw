@@ -257,7 +257,13 @@ def view_guarded_file(path: str | Path, filesystem_guard) -> str:
 def create_guarded_file(action_input: str, filesystem_guard) -> str:
     """
     Create a file only if it is inside an approved directory.
-    Expected format: filepath::content
+    Low-level expected format:
+        filepath::content
+        
+    Note:
+        The planner should usually provide only the filepath.
+        PlanExecutor is responsible for generating the file content and converting
+        the action input into filepath::content before this tool is called.
     """
     parts = action_input.split("::", 1)
 

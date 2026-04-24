@@ -193,7 +193,10 @@ class PlanExecutor:
         error = ""
 
         if plan.get("needs_memory") and self.memory is not None:
-            context = self.memory.handle(plan.get("memory_action", "NONE"))
+            context = self.memory.handle(
+                plan.get("memory_action", "NONE"),
+                plan.get("memory_input", ""),
+            )
             self._debug("MEMORY CONTEXT", context)
 
         if plan.get("needs_executor") and self.executor is not None:

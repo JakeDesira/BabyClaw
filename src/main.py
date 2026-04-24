@@ -12,6 +12,21 @@ def main() -> None:
     filesystem_guard = FilesystemGuard()
 
     memory = agents.MemoryAgent()
+
+
+    saved_paths = memory.get_saved_accessible_path_values()
+
+    for saved_path in saved_paths:
+        filesystem_guard.approve(saved_path)
+
+    if saved_paths:
+        print("\nRestored saved accessible paths:")
+
+        for approved_path in filesystem_guard.list_approved():
+            print(f"- {approved_path}")
+
+        print()
+
     executor = agents.ExecutorAgent(memory=memory, filesystem_guard=filesystem_guard, debug=debug)
 
     response_generator = agents.ResponseGenerator(memory=memory, reasoning_model=reasoning_model, debug=debug)
@@ -38,11 +53,30 @@ def main() -> None:
 
             if confirm == "YES":
                 if filesystem_guard.approve(raw_path):
-                    print(f"\nBaby Claw: Access granted to {Path(raw_path).resolve()}\n")
+                    resolved_path = Path(raw_path).expanduser().resolve()
+                    memory_result = memory.save_accessible_path(str(resolved_path))
+
+                    print(f"\nBaby Claw: Access granted to {resolved_path}")
+                    print(memory_result + "\n")
                 else:
                     print("\nBaby Claw: Could not approve that path. Make sure it exists and is a directory.\n")
             else:
                 print("\nBaby Claw: Access denied.\n")
+
+            continue
+
+        if prompt.lower().startswith("revoke access "):
+            raw_path = prompt[len("revoke access "):].strip().strip("\"'")
+
+            live_revoked = filesystem_guard.revoke(raw_path)
+            memory_result = memory.revoke_accessible_path(raw_path)
+
+            if live_revoked:
+                print(f"\nBaby Claw: Access revoked for {Path(raw_path).expanduser().resolve()}")
+                print(memory_result + "\n")
+            else:
+                print("\nBaby Claw: That path was not currently approved.")
+                print(memory_result + "\n")
 
             continue
 

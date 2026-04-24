@@ -238,6 +238,13 @@ class PlannerAgent:
             "get_last_active_file_content",
             "get_previous_active_file_name",
             "get_previous_active_file_content",
+            "save_long_term_memory",
+            "search_long_term_memory",
+            "list_recent_long_term_memories",
+            "delete_long_term_memory",
+            "save_accessible_path",
+            "list_accessible_paths",
+            "revoke_accessible_path",
         }
 
         valid_response_modes = {"RAW", "TRANSFORM", "ANSWER", "EXECUTE"}

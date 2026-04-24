@@ -55,3 +55,23 @@ class FilesystemGuard:
 
     def get_active_directory(self) -> str:
         return str(self.active_directory) if self.active_directory else ""
+    
+    def revoke(self, raw_path: str) -> bool:
+        resolved = Path(raw_path).expanduser().resolve()
+
+        before_count = len(self.approved_directories)
+
+        self.approved_directories = [
+            directory
+            for directory in self.approved_directories
+            if directory != resolved
+        ]
+
+        if self.active_directory == resolved:
+            self.active_directory = (
+                self.approved_directories[-1]
+                if self.approved_directories
+                else None
+            )
+
+        return len(self.approved_directories) < before_count
