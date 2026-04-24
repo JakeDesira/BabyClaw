@@ -360,3 +360,76 @@ def prepare_guarded_edit_file(action_input: str, filesystem_guard) -> str:
         return f"EDIT_READY::{safe}::{instruction}::{existing_content}"
     except Exception as e:
         return f"Error reading file for editing: {e}"
+    
+def write_guarded_file(action_input: str, filesystem_guard=None) -> str:
+    if filesystem_guard is None:
+        return "Access denied: no filesystem guard available."
+
+    if "::" not in action_input:
+        return "Error: write_file input must be filepath::content."
+
+    file_path, content = action_input.split("::", 1)
+
+    safe_path = filesystem_guard.safe_path(file_path)
+
+    if safe_path is None:
+        return f"Access denied: {file_path}"
+
+    if not safe_path.exists():
+        return f"Error: File does not exist: {safe_path}"
+
+    if not safe_path.is_file():
+        return f"Error: Path is not a file: {safe_path}"
+
+    safe_path.write_text(content, encoding="utf-8")
+
+    return f"File updated: {safe_path}"
+
+def find_guarded_file(file_name: str, filesystem_guard=None) -> str:
+    if filesystem_guard is None:
+        return "Access denied: no filesystem guard available."
+
+    approved_dirs = filesystem_guard.list_approved()
+
+    if not approved_dirs:
+        return "No approved directories available."
+
+    query = file_name.strip()
+
+    if not query:
+        return "Error: No file name provided."
+
+    matches = []
+
+    for approved_dir in approved_dirs:
+        root = Path(approved_dir)
+
+        if not root.exists() or not root.is_dir():
+            continue
+
+        # If user gave a relative path, try it directly first.
+        direct_candidate = root / query
+
+        if direct_candidate.exists():
+            matches.append(direct_candidate)
+
+        # Then search by final filename.
+        name = Path(query).name
+
+        for candidate in root.rglob(name):
+            if candidate.exists():
+                matches.append(candidate)
+
+    unique_matches = []
+
+    for match in matches:
+        if match not in unique_matches:
+            unique_matches.append(match)
+
+    if not unique_matches:
+        return f"No matching file found for: {query}"
+
+    if len(unique_matches) == 1:
+        return f"Found file: {unique_matches[0]}"
+
+    return "Found multiple files:\n" + "\n".join(str(match) for match in unique_matches)

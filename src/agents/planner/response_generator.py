@@ -96,13 +96,14 @@ class ResponseGenerator:
         )
 
 
-    def generate_file_content(self, prompt: str) -> str:
+    def generate_file_content(self, prompt: str, execution_context: str = "") -> str:
         context = self._get_context()
         last_file_name = self.memory.get_last_active_file_name() if self.memory else ""
         last_file_content = self.memory.get_last_active_file_content() if self.memory else ""
 
         user_prompt = (
             f"Recent conversation context:\n{context}\n\n"
+            f"Previous execution results:\n{execution_context if execution_context else 'None'}\n\n"
             f"Recently active file: {last_file_name}\n"
             f"Its content:\n{last_file_content[:2000] if last_file_content else 'None'}\n\n"
             f"User request:\n{prompt}"

@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import json
 
 from ollama_client import OllamaClient
 import prompts
@@ -25,6 +26,17 @@ class PlannerAgent:
             return self.memory.get_short_term_context()
         except AttributeError:
             return ""
+        
+    def _extract_json(self, text: str) -> str:
+        cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("No JSON object found in planner response.")
+
+        return cleaned[start:end + 1]
         
     def _summarise_directory_tree(self, root: Path, max_depth: int = 3, max_entries: int = 100) -> str:
         lines = []
@@ -126,6 +138,19 @@ class PlannerAgent:
             + "\n".join(f"- {directory}" for directory in approved_dirs)
         )
     
+    def _looks_like_filesystem_path(self, value: str) -> bool:
+        value = value.strip()
+
+        if not value:
+            return False
+
+        return (
+            "/" in value
+            or "\\" in value
+            or value.startswith("~")
+            or value.startswith("/Users/")
+        )
+    
     
     def create_plan(self, prompt: str) -> dict:
         approved_dirs = self._get_approved_directories()
@@ -173,119 +198,15 @@ class PlannerAgent:
 
 
     def _parse_plan(self, raw_plan: str) -> dict:
-        cleaned = re.sub(r"<think>.*?</think>", "", raw_plan, flags=re.DOTALL).strip()
+        try:
+            json_text = self._extract_json(raw_plan)
+            plan = json.loads(json_text)
+        except Exception as e:
+            self._debug("JSON PARSE ERROR", e)
+            self._debug("RAW INVALID PLAN", raw_plan)
+            return self._fallback_plan(f"Planner returned invalid JSON: {e}")
 
-        result = {
-            "plan_text": "",
-            "needs_memory": False,
-            "needs_executor": False,
-            "needs_review": False,
-            "executor_actions": [],
-            "memory_action": "NONE",
-            "memory_input": "NONE",
-            "response_mode": "RAW",
-            "target_source": "NONE",
-            "transformation": "NONE",
-        }
-
-        actions_mode = False
-
-        for line in cleaned.splitlines():
-            stripped = line.strip()
-            upper_line = stripped.upper()
-
-            if not stripped:
-                continue
-
-            if upper_line.startswith("MEMORY:"):
-                actions_mode = False
-                result["needs_memory"] = "YES" in upper_line
-
-            elif upper_line.startswith("EXECUTOR:"):
-                actions_mode = False
-                result["needs_executor"] = "YES" in upper_line
-
-            elif upper_line.startswith("REVIEW:"):
-                actions_mode = False
-                result["needs_review"] = "YES" in upper_line
-
-            elif upper_line.startswith("PLAN:"):
-                actions_mode = False
-                result["plan_text"] = line.split(":", 1)[1].strip()
-
-            elif upper_line.startswith("MEMORY_ACTION:"):
-                actions_mode = False
-                result["memory_action"] = line.split(":", 1)[1].strip()
-
-            elif upper_line.startswith("MEMORY_INPUT:"):
-                actions_mode = False
-                result["memory_input"] = line.split(":", 1)[1].strip()
-
-            elif upper_line.startswith("ACTIONS:"):
-                actions_mode = True
-                value = line.split(":", 1)[1].strip() if ":" in line else ""
-
-                if value.upper() == "NONE":
-                    result["executor_actions"] = []
-                    actions_mode = False
-
-                continue
-
-            elif upper_line.startswith("RESPONSE_MODE:"):
-                actions_mode = False
-                result["response_mode"] = line.split(":", 1)[1].strip().upper()
-
-            elif upper_line.startswith("TARGET_SOURCE:"):
-                actions_mode = False
-                result["target_source"] = line.split(":", 1)[1].strip().upper()
-
-            elif upper_line.startswith("TRANSFORMATION:"):
-                actions_mode = False
-                result["transformation"] = line.split(":", 1)[1].strip().upper()
-
-            elif actions_mode:
-                action = self._parse_action_line(stripped)
-
-                if action is not None:
-                    result["executor_actions"].append(action)
-
-        return self._validate_plan(result)
-    
-    def _parse_action_line(self, line: str) -> dict | None:
-        action_line = re.sub(r"^\d+\.\s*", "", line)
-        action_line = re.sub(r"^-\s*", "", action_line).strip()
-
-        if not action_line or action_line.upper() == "NONE":
-            return None
-
-        if "::" in action_line:
-            action_name, action_input = action_line.split("::", 1)
-        else:
-            action_name, action_input = action_line, ""
-
-        action_name = action_name.strip()
-        action_input = action_input.strip()
-
-        malformed_markers = [
-            "\n- ",
-            " - create_file::",
-            " - move_path::",
-            " - copy_path::",
-            " - edit_file::",
-            " - append_file::",
-            " - delete_file::",
-            " - create_directory::",
-            " - rename_path::",
-        ]
-
-        for marker in malformed_markers:
-            if marker in action_input:
-                action_input = action_input.split(marker, 1)[0].strip()
-
-        return {
-            "action": action_name,
-            "input": action_input,
-        }
+        return self._validate_plan(plan)
     
 
     def _validate_plan(self, plan: dict) -> dict:
@@ -296,7 +217,9 @@ class PlannerAgent:
             "read_multiple_files",
             "list_directory",
             "view_file",
+            "find_file",
             "create_file",
+            "write_file",
             "append_file",
             "delete_file",
             "edit_file",
@@ -321,30 +244,109 @@ class PlannerAgent:
         valid_target_sources = {"NONE", "MEMORY", "EXECUTOR", "BOTH"}
         valid_transformations = {"NONE", "SUMMARISE", "EXPLAIN", "EXTRACT", "EXECUTE_INSTRUCTIONS"}
 
-        plan["executor_actions"] = [
-            item for item in plan["executor_actions"]
-            if item["action"] in valid_executor_actions
-        ]
+        validated = {
+            "plan_text": str(plan.get("plan_text", "")),
+            "needs_memory": bool(plan.get("needs_memory", False)),
+            "needs_executor": bool(plan.get("needs_executor", False)),
+            "needs_review": bool(plan.get("needs_review", False)),
+            "memory_action": str(plan.get("memory_action", "NONE")),
+            "memory_input": str(plan.get("memory_input", "NONE")),
+            "executor_actions": [],
+            "response_mode": str(plan.get("response_mode", "RAW")).upper(),
+            "target_source": str(plan.get("target_source", "NONE")).upper(),
+            "transformation": str(plan.get("transformation", "NONE")).upper(),
+        }
 
-        if plan["memory_action"] not in valid_memory_actions:
-            plan["memory_action"] = "NONE"
+        raw_actions = plan.get("executor_actions", [])
 
-        if plan["response_mode"] not in valid_response_modes:
-            plan["response_mode"] = "RAW"
+        if not isinstance(raw_actions, list):
+            raw_actions = []
 
-        if plan["target_source"] not in valid_target_sources:
-            plan["target_source"] = "NONE"
+        for item in raw_actions:
+            if not isinstance(item, dict):
+                continue
 
-        if plan["transformation"] not in valid_transformations:
-            plan["transformation"] = "NONE"
+            action = str(item.get("action", "")).strip()
+            action_input = str(item.get("input", "")).strip()
 
-        return plan
+            if action in valid_executor_actions:
+                validated["executor_actions"].append({
+                    "action": action,
+                    "input": action_input,
+                })
+
+        if validated["memory_action"] not in valid_memory_actions:
+            validated["memory_action"] = "NONE"
+            validated["memory_input"] = "NONE"
+
+        if validated["response_mode"] not in valid_response_modes:
+            validated["response_mode"] = "RAW"
+
+        if validated["target_source"] not in valid_target_sources:
+            validated["target_source"] = "NONE"
+
+        if validated["transformation"] not in valid_transformations:
+            validated["transformation"] = "NONE"
+
+        return validated
     
 
     def _normalize_plan(self, plan: dict, prompt: str) -> dict:
         lower_prompt = prompt.lower()
         executor_actions = plan.get("executor_actions", [])
         first_action = executor_actions[0]["action"] if executor_actions else "NONE"
+
+        edit_words = {
+            "edit",
+            "modify",
+            "change",
+            "fix",
+            "update",
+            "separate",
+            "seperate",
+        }
+
+        read_words = {
+            "read",
+            "look at",
+            "open",
+            "show",
+            "view",
+        }
+
+        user_wants_edit = any(word in lower_prompt for word in edit_words)
+        user_wants_read = any(word in lower_prompt for word in read_words)
+
+        for item in executor_actions:
+            action = item.get("action", "")
+            action_input = item.get("input", "")
+
+            if not self._looks_like_filesystem_path(action_input):
+                continue
+
+            cleaned_path = action_input.replace("\\", "/").strip().strip("'\"")
+
+            approved_dirs = self._get_approved_directories()
+
+            if approved_dirs:
+                active_root_name = Path(approved_dirs[-1]).name.lower()
+                parts = Path(cleaned_path).parts
+
+                if parts and parts[0].lower() == active_root_name:
+                    cleaned_path = str(Path(*parts[1:]))
+
+            if action == "read_file" and user_wants_edit:
+                item["action"] = "edit_file"
+                item["input"] = (
+                    f"{cleaned_path}::"
+                    "Edit the existing file in place. "
+                )
+
+            elif action == "read_file" and user_wants_read:
+                item["action"] = "view_file"
+                item["input"] = cleaned_path
+
+        plan["executor_actions"] = executor_actions
 
         if plan["needs_executor"] and not executor_actions:
             plan["needs_executor"] = False
@@ -426,7 +428,7 @@ class PlannerAgent:
             action = item.get("action", "")
             action_input = item.get("input", "")
 
-            if action == "move_path" and "::" not in action_input and ":" in action_input:
+            if action in ("move_path", "copy_path") and "::" not in action_input and ":" in action_input:
                 source, destination = action_input.split(":", 1)
                 item["input"] = f"{source.strip()}::{destination.strip()}"
 

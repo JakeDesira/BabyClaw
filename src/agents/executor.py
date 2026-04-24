@@ -116,6 +116,17 @@ class ExecutorAgent:
 
         return "Please specify which file to read. Available files:\n" + "\n".join(files)
 
+    def _handle_read_multiple_files(self, action_input: str) -> str:
+        filenames = [
+            name.strip()
+            for name in action_input.split(",")
+            if name.strip()
+        ]
+
+        if not filenames:
+            return "Error: read_multiple_files requires at least one filename."
+
+        return tools.read_multiple_files(filenames)
 
     def handle(self, action: str, action_input: str = "", original_prompt: str = "") -> str:
         if action == "get_current_time":
@@ -136,6 +147,9 @@ class ExecutorAgent:
         if action == "create_file":
             return tools.create_guarded_file(action_input, self.filesystem_guard)
 
+        if action == "write_file":
+            return tools.write_guarded_file(action_input, self.filesystem_guard)
+
         if action == "append_file":
             return tools.append_guarded_file(action_input, self.filesystem_guard)
 
@@ -144,6 +158,9 @@ class ExecutorAgent:
 
         if action == "edit_file":
             return tools.prepare_guarded_edit_file(action_input, self.filesystem_guard)
+        
+        if action == "find_file":
+            return tools.find_guarded_file(action_input, self.filesystem_guard)
 
         if action == "list_directory":
             return tools.list_directory(action_input, self.filesystem_guard)

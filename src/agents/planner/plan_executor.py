@@ -23,32 +23,46 @@ class PlanExecutor:
 
 
     def _resolve_relative_path(self, path_value: str, must_exist: bool = False) -> str:
-        path_value = path_value.strip()
+        path_value = path_value.strip().strip("'\"")
 
         if not path_value:
             return path_value
 
-        path = Path(path_value)
+        path_value = path_value.replace("\\", "/")
+        path = Path(path_value).expanduser()
 
         if path.is_absolute():
-            return path_value
+            return str(path)
 
         approved_dirs = self._get_approved_directories()
 
         if not approved_dirs:
             return path_value
 
+        base_dir = Path(approved_dirs[-1])
+        parts = path.parts
+
+        if parts and parts[0].lower() == base_dir.name.lower():
+            path = Path(*parts[1:])
+
+        candidate = base_dir / path
+
         if must_exist:
-            for approved_dir in approved_dirs:
-                candidate = Path(approved_dir) / path_value
+            if candidate.exists():
+                return str(candidate)
 
-                if candidate.exists():
-                    return str(candidate)
+            matches = list(base_dir.rglob(path.name))
 
-        return str(Path(approved_dirs[0]) / path_value)
+            if len(matches) == 1:
+                return str(matches[0])
+
+            if len(matches) > 1:
+                return str(matches[0])
+
+        return str(candidate)
 
 
-    def _prepare_create_file_action(self, prompt: str, action_input: str) -> str:
+    def _prepare_create_file_action(self, prompt: str, action_input: str, previous_results: list[str] | None = None) -> str:
         parts = action_input.split("::", 1)
         filepath = parts[0].strip()
 
@@ -57,11 +71,14 @@ class PlanExecutor:
         if self.response_generator is None:
             raise ValueError("ResponseGenerator is required for create_file actions.")
 
+        execution_context = "\n\n".join(previous_results or [])
+
         generated = self.response_generator.generate_file_content(
             f"{prompt}\n\n"
             f"Target file path: {filepath}\n"
             f"Target file name: {Path(filepath).name}\n"
-            f"Target file extension: {Path(filepath).suffix.lower()}"
+            f"Target file extension: {Path(filepath).suffix.lower()}",
+            execution_context=execution_context,
         )
 
         return f"{filepath}::{generated}"
@@ -107,14 +124,14 @@ class PlanExecutor:
         return f"{source_path}::{new_name.strip()}"
 
 
-    def _prepare_action_input(self, prompt: str, action: str, action_input: str) -> str:
+    def _prepare_action_input(self, prompt: str, action: str, action_input: str, previous_results: list[str] | None = None) -> str:
         if action in ("create_directory", "list_directory"):
             return self._resolve_relative_path(action_input)
 
         if action == "create_file":
-            return self._prepare_create_file_action(prompt, action_input)
+            return self._prepare_create_file_action(prompt, action_input, previous_results)
 
-        if action in ("edit_file", "delete_file", "view_file", "append_file"):
+        if action in ("edit_file", "delete_file", "view_file", "append_file", "write_file"):
             return self._prepare_existing_file_action(action_input)
 
         if action in ("move_path", "copy_path"):
@@ -139,13 +156,11 @@ class PlanExecutor:
         )
 
         write_input = f"{filepath}::{improved}"
-        write_result = self.executor.handle("create_file", write_input, prompt)
+        write_result = self.executor.handle("write_file", write_input, prompt)
 
-        if write_result.startswith("File created:"):
+        if write_result.startswith("File updated:"):
             if self.memory is not None:
                 self.memory.set_last_active_file(Path(filepath).name, improved)
-
-            return write_result.replace("File created:", "File updated:")
 
         return write_result
 
@@ -154,11 +169,19 @@ class PlanExecutor:
         if action != "create_file":
             return
 
-        if not step_result:
+        if self.memory is None:
             return
 
-        if not step_result.startswith("File created:"):
+        if not step_result or not step_result.startswith("File created:"):
             return
+
+        parts = resolved_input.split("::", 1)
+
+        if len(parts) != 2:
+            return
+
+        filepath, content = parts
+        self.memory.set_last_active_file(Path(filepath).name, content)
 
 
     def execute_plan_once(self, prompt: str, plan: dict) -> dict:
@@ -181,7 +204,7 @@ class PlanExecutor:
                 action_input = item.get("input", "")
 
                 try:
-                    resolved_input = self._prepare_action_input(prompt, action, action_input)
+                    resolved_input = self._prepare_action_input(prompt, action, action_input, previous_results=execution_results)
                 except Exception as e:
                     error = f"Error preparing action input for '{action}': {e}"
                     execution_results.append(error)
@@ -195,10 +218,10 @@ class PlanExecutor:
                 if step_result is None:
                     step_result = f"Error: Executor action '{action}' returned no result."
 
-                self._remember_created_file(action, resolved_input, step_result)
-
                 if step_result.startswith("EDIT_READY::"):
                     step_result = self._handle_edit_ready(step_result, prompt)
+
+                self._remember_created_file(action, resolved_input, step_result)
 
                 self._debug("EXECUTOR ACTION", action)
                 self._debug("EXECUTOR INPUT", resolved_input)

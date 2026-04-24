@@ -7,10 +7,8 @@ Others:
 
 
 Requirements:
-- executor needs memory
 - Add long term memory
 - files should be stored in long term memory and retrieved for context
 - check about image support
-- allow it to edit files with given access
 - Add whatsapp capability
 - use a dict for structure
