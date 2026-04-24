@@ -240,3 +240,123 @@ def read_multiple_files(filenames: list[str]) -> str:
         results.append(f"Could not find: {', '.join(not_found)}")
 
     return "\n\n".join(results) if results else "None of the specified files could be found."
+
+
+def view_guarded_file(path: str | Path, filesystem_guard) -> str:
+    """
+    Read a file only if it is inside an approved directory.
+    """
+    safe = filesystem_guard.safe_path(path)
+
+    if safe is None:
+        return f"Access denied. '{path}' is not within an approved directory."
+
+    return read_file(safe)
+
+
+def create_guarded_file(action_input: str, filesystem_guard) -> str:
+    """
+    Create a file only if it is inside an approved directory.
+    Expected format: filepath::content
+    """
+    parts = action_input.split("::", 1)
+
+    if len(parts) != 2:
+        return "Error: create_file requires 'filepath::content' format."
+
+    filepath, content = parts
+    filepath = filepath.strip()
+
+    safe = filesystem_guard.safe_path(filepath)
+
+    if safe is None:
+        return f"Access denied. '{filepath}' is not within an approved directory."
+
+    try:
+        safe.parent.mkdir(parents=True, exist_ok=True)
+
+        if safe.exists():
+            return f"Error: File already exists: {safe}"
+
+        safe.write_text(content, encoding="utf-8")
+
+        return f"File created: {safe}"
+
+    except Exception as e:
+        return f"Error creating file: {e}"
+
+
+def append_guarded_file(action_input: str, filesystem_guard) -> str:
+    """
+    Append content to a file only if it is inside an approved directory.
+    Expected format: filepath::content
+    """
+    parts = action_input.split("::", 1)
+
+    if len(parts) != 2:
+        return "Error: append_file requires 'filepath::content' format."
+
+    filepath, content = parts
+    safe = filesystem_guard.safe_path(filepath)
+
+    if safe is None:
+        return f"Access denied. '{filepath}' is not within an approved directory."
+
+    try:
+        with open(safe, "a", encoding="utf-8") as f:
+            f.write(content)
+
+        return f"Content appended to: {safe}"
+    except Exception as e:
+        return f"Error appending to file: {e}"
+
+
+def delete_guarded_file(path: str | Path, filesystem_guard) -> str:
+    """
+    Delete a file only if it is inside an approved directory.
+    """
+    safe = filesystem_guard.safe_path(path)
+
+    if safe is None:
+        return f"Access denied. '{path}' is not within an approved directory."
+
+    if not safe.exists():
+        return f"File not found: {path}"
+
+    if not safe.is_file():
+        return f"Error: '{path}' is not a file."
+
+    try:
+        safe.unlink()
+        return f"File deleted: {safe}"
+    except Exception as e:
+        return f"Error deleting file: {e}"
+
+
+def prepare_guarded_edit_file(action_input: str, filesystem_guard) -> str:
+    """
+    Prepare a file for editing only if it is inside an approved directory.
+    Expected format: filepath::instruction
+    """
+    parts = action_input.split("::", 1)
+
+    if len(parts) != 2:
+        return "Error: edit_file requires 'filepath::instruction' format."
+
+    filepath, instruction = parts
+    safe = filesystem_guard.safe_path(filepath)
+
+    if safe is None:
+        return f"Access denied. '{filepath}' is not within an approved directory."
+
+    if not safe.exists():
+        return f"File not found: {filepath}"
+
+    if not safe.is_file():
+        return f"Error: '{filepath}' is not a file."
+
+    try:
+        existing_content = safe.read_text(encoding="utf-8")
+        return f"EDIT_READY::{safe}::{instruction}::{existing_content}"
+    except Exception as e:
+        return f"Error reading file for editing: {e}"

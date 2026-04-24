@@ -19,15 +19,22 @@ class ReviewerAgent:
             f"Draft result:\n{draft_result}"
         )
 
-        raw_review = self.client.ask(
+        review_response = self.client.ask(
             prompt=review_user_prompt,
             system_prompt=prompts.reviewer_prompt,
             temperature=0,
             think="low"
         )
 
-        self._debug("RAW REVIEW", raw_review)
-        parsed = self._parse_review(raw_review)
+        if not review_response.ok:
+            self._debug("REVIEW ERROR", review_response.error)
+            return {
+                "approved": False,
+                "feedback": review_response.error,
+            }
+
+        self._debug("RAW REVIEW", review_response.content)
+        parsed = self._parse_review(review_response.content)
         self._debug("PARSED REVIEW", parsed)
         return parsed
 
@@ -36,7 +43,7 @@ class ReviewerAgent:
 
         result = {
             "approved": False,
-            "feedback": cleaned
+            "feedback": cleaned,
         }
 
         for line in cleaned.splitlines():

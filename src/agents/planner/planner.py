@@ -25,92 +25,152 @@ class PlannerAgent:
             return self.memory.get_short_term_context()
         except AttributeError:
             return ""
+        
+    def _summarise_directory_tree(self, root: Path, max_depth: int = 3, max_entries: int = 100) -> str:
+        lines = []
+        count = 0
 
-    def create_plan(self, prompt: str) -> dict:
-        available_files = list_input_files()
-        last_file_name = ""
-        last_file_content_preview = ""
+        def walk(path: Path, depth: int) -> None:
+            nonlocal count
 
-        approved_dirs = []
-        if self.filesystem_guard is not None:
-            approved_dirs = self.filesystem_guard.list_approved()
+            if depth > max_depth or count >= max_entries:
+                return
 
-        directory_contents_context = ""
+            try:
+                entries = sorted(path.iterdir(), key=lambda p: p.name.lower())
+            except Exception:
+                return
 
-        if approved_dirs:
-            directory_summaries = []
+            for entry in entries:
+                if count >= max_entries:
+                    return
 
-            for approved_dir in approved_dirs:
                 try:
-                    path = Path(approved_dir)
-                    if path.exists() and path.is_dir():
-                        entries = sorted(path.iterdir(), key=lambda p: p.name.lower())
-                        formatted_entries = []
+                    relative = entry.relative_to(root)
+                except ValueError:
+                    relative = entry
 
-                        for entry in entries:
-                            kind = "[DIR]" if entry.is_dir() else "[FILE]"
-                            formatted_entries.append(f"{kind} {entry.name}")
+                kind = "[DIR]" if entry.is_dir() else "[FILE]"
+                lines.append(f"{kind} {relative}")
+                count += 1
 
-                        if formatted_entries:
-                            directory_summaries.append(
-                                f"Contents of approved directory {approved_dir}:\n" +
-                                "\n".join(formatted_entries)
-                            )
-                        else:
-                            directory_summaries.append(
-                                f"Contents of approved directory {approved_dir}:\n(empty)"
-                            )
-                except Exception:
-                    continue
+                if entry.is_dir():
+                    walk(entry, depth + 1)
 
-            directory_contents_context = "\n\n".join(directory_summaries)
+        walk(root, 1)
 
-        if self.memory is not None:
-            last_file_name = self.memory.get_last_active_file_name()
-            content = self.memory.get_last_active_file_content()
-            if content:
-                last_file_content_preview = content[:300] + ("..." if len(content) > 300 else "")
+        return "\n".join(lines) if lines else "(empty)"
+    
+    def _get_approved_directories(self) -> list[str]:
+        if self.filesystem_guard is None:
+            return []
+        
+        return self.filesystem_guard.list_approved()
+    
+    def _build_directory_context(self, approved_dirs: list[str]) -> str:
+        if not approved_dirs:
+            return ""
 
-        dirs_context = (
-            "Approved directories (use these paths when creating or editing files):\n"
-            + "\n".join(f"- {d}" for d in approved_dirs)
-            if approved_dirs
-            else "No directories have been granted access yet."
-        )
+        directory_summaries = []
 
-        file_state_context = (
+        for approved_dir in approved_dirs:
+            try:
+                path = Path(approved_dir)
+
+                if path.exists() and path.is_dir():
+                    summary = self._summarise_directory_tree(path)
+                    directory_summaries.append(
+                        f"Recursive contents of approved directory {approved_dir}:\n{summary}"
+                    )
+            except Exception as e:
+                self._debug("DIRECTORY SUMMARY ERROR", f"{approved_dir}: {e}")
+
+        return "\n\n".join(directory_summaries)
+    
+    def _build_file_state_context(self) -> str:
+        if self.memory is None:
+            return "No file currently active."
+
+        last_file_name = self.memory.get_last_active_file_name()
+        content = self.memory.get_last_active_file_content()
+
+        if not last_file_name:
+            return "No file currently active."
+
+        preview = ""
+
+        if content:
+            preview = content[:300] + ("..." if len(content) > 300 else "")
+
+        return (
             f"Last active file: {last_file_name}\n"
-            f"Content preview:\n{last_file_content_preview}"
-            if last_file_name
-            else "No file currently active."
+            f"Content preview:\n{preview}"
         )
+    
 
-        files_context = (
-            "Available files:\n" + "\n".join(f"- {f}" for f in available_files)
-            if available_files
-            else "No files available."
+    def _build_files_context(self) -> str:
+        available_files = list_input_files()
+
+        if not available_files:
+            return "No files available."
+
+        return "Available files:\n" + "\n".join(f"- {file_name}" for file_name in available_files)
+
+
+    def _build_dirs_context(self, approved_dirs: list[str]) -> str:
+        if not approved_dirs:
+            return "No directories have been granted access yet."
+
+        return (
+            "Approved directories (use these paths when creating or editing files):\n"
+            + "\n".join(f"- {directory}" for directory in approved_dirs)
         )
+    
+    
+    def create_plan(self, prompt: str) -> dict:
+        approved_dirs = self._get_approved_directories()
 
         planner_user_prompt = (
             f"Recent context:\n{self._get_context()}\n\n"
-            f"{files_context}\n\n"
-            f"{dirs_context}\n\n"
-            f"{directory_contents_context}\n\n"
-            f"File state:\n{file_state_context}\n\n"
+            f"{self._build_files_context()}\n\n"
+            f"{self._build_dirs_context(approved_dirs)}\n\n"
+            f"{self._build_directory_context(approved_dirs)}\n\n"
+            f"File state:\n{self._build_file_state_context()}\n\n"
             f"User request:\n{prompt}"
         )
 
-        raw_plan = self.planning_client.ask(
+        plan_response = self.planning_client.ask(
             prompt=planner_user_prompt,
             system_prompt=prompts.planner_system_prompt,
             temperature=0,
-            think="low"
+            think="low",
         )
 
-        parsed_plan = self._parse_plan(raw_plan)
+        if not plan_response.ok:
+            self._debug("PLANNER LLM ERROR", plan_response.error)
+            return self._fallback_plan(plan_response.error)
+
+        self._debug("RAW PLAN", plan_response.content)
+
+        parsed_plan = self._parse_plan(plan_response.content)
         normalized_plan = self._normalize_plan(parsed_plan, prompt)
         self._debug("PARSED PLAN", normalized_plan)
         return normalized_plan
+    
+    def _fallback_plan(self, error_message: str) -> dict:
+        return {
+            "plan_text": error_message,
+            "needs_memory": False,
+            "needs_executor": False,
+            "needs_review": False,
+            "executor_actions": [],
+            "memory_action": "NONE",
+            "memory_input": "NONE",
+            "response_mode": "RAW",
+            "target_source": "NONE",
+            "transformation": "NONE",
+        }
+
 
     def _parse_plan(self, raw_plan: str) -> dict:
         cleaned = re.sub(r"<think>.*?</think>", "", raw_plan, flags=re.DOTALL).strip()
@@ -133,6 +193,9 @@ class PlannerAgent:
         for line in cleaned.splitlines():
             stripped = line.strip()
             upper_line = stripped.upper()
+
+            if not stripped:
+                continue
 
             if upper_line.startswith("MEMORY:"):
                 actions_mode = False
@@ -161,8 +224,11 @@ class PlannerAgent:
             elif upper_line.startswith("ACTIONS:"):
                 actions_mode = True
                 value = line.split(":", 1)[1].strip() if ":" in line else ""
+
                 if value.upper() == "NONE":
                     result["executor_actions"] = []
+                    actions_mode = False
+
                 continue
 
             elif upper_line.startswith("RESPONSE_MODE:"):
@@ -177,40 +243,52 @@ class PlannerAgent:
                 actions_mode = False
                 result["transformation"] = line.split(":", 1)[1].strip().upper()
 
-            elif actions_mode and stripped:
-                action_line = re.sub(r"^\d+\.\s*", "", stripped)
-                action_line = re.sub(r"^-\s*", "", action_line)
+            elif actions_mode:
+                action = self._parse_action_line(stripped)
 
-                if "::" in action_line:
-                    action_name, action_input = action_line.split("::", 1)
-                else:
-                    action_name, action_input = action_line, ""
+                if action is not None:
+                    result["executor_actions"].append(action)
 
-                action_name = action_name.strip()
-                action_input = action_input.strip()
+        return self._validate_plan(result)
+    
+    def _parse_action_line(self, line: str) -> dict | None:
+        action_line = re.sub(r"^\d+\.\s*", "", line)
+        action_line = re.sub(r"^-\s*", "", action_line).strip()
 
-                malformed_markers = [
-                    "\n- ",
-                    " - create_file::",
-                    " - move_path::",
-                    " - edit_file::",
-                    " - append_file::",
-                    " - delete_file::",
-                    " - create_directory::",
-                    " - rename_path::",
-                ]
+        if not action_line or action_line.upper() == "NONE":
+            return None
 
-                for marker in malformed_markers:
-                    if marker in action_input:
-                        action_input = action_input.split(marker, 1)[0].strip()
+        if "::" in action_line:
+            action_name, action_input = action_line.split("::", 1)
+        else:
+            action_name, action_input = action_line, ""
 
-                result["executor_actions"].append(
-                    {
-                        "action": action_name,
-                        "input": action_input,
-                    }
-                )
+        action_name = action_name.strip()
+        action_input = action_input.strip()
 
+        malformed_markers = [
+            "\n- ",
+            " - create_file::",
+            " - move_path::",
+            " - copy_path::",
+            " - edit_file::",
+            " - append_file::",
+            " - delete_file::",
+            " - create_directory::",
+            " - rename_path::",
+        ]
+
+        for marker in malformed_markers:
+            if marker in action_input:
+                action_input = action_input.split(marker, 1)[0].strip()
+
+        return {
+            "action": action_name,
+            "input": action_input,
+        }
+    
+
+    def _validate_plan(self, plan: dict) -> dict:
         valid_executor_actions = {
             "get_current_time",
             "list_input_files",
@@ -224,6 +302,7 @@ class PlannerAgent:
             "edit_file",
             "create_directory",
             "move_path",
+            "copy_path",
             "rename_path",
         }
 
@@ -242,30 +321,31 @@ class PlannerAgent:
         valid_target_sources = {"NONE", "MEMORY", "EXECUTOR", "BOTH"}
         valid_transformations = {"NONE", "SUMMARISE", "EXPLAIN", "EXTRACT", "EXECUTE_INSTRUCTIONS"}
 
-        result["executor_actions"] = [
-            item for item in result["executor_actions"]
+        plan["executor_actions"] = [
+            item for item in plan["executor_actions"]
             if item["action"] in valid_executor_actions
         ]
 
-        if result["memory_action"] not in valid_memory_actions:
-            result["memory_action"] = "NONE"
+        if plan["memory_action"] not in valid_memory_actions:
+            plan["memory_action"] = "NONE"
 
-        if result["response_mode"] not in valid_response_modes:
-            result["response_mode"] = "RAW"
+        if plan["response_mode"] not in valid_response_modes:
+            plan["response_mode"] = "RAW"
 
-        if result["target_source"] not in valid_target_sources:
-            result["target_source"] = "NONE"
+        if plan["target_source"] not in valid_target_sources:
+            plan["target_source"] = "NONE"
 
-        if result["transformation"] not in valid_transformations:
-            result["transformation"] = "NONE"
+        if plan["transformation"] not in valid_transformations:
+            plan["transformation"] = "NONE"
 
-        return result
+        return plan
+    
 
     def _normalize_plan(self, plan: dict, prompt: str) -> dict:
         lower_prompt = prompt.lower()
         executor_actions = plan.get("executor_actions", [])
         first_action = executor_actions[0]["action"] if executor_actions else "NONE"
-        
+
         if plan["needs_executor"] and not executor_actions:
             plan["needs_executor"] = False
 
@@ -309,6 +389,9 @@ class PlannerAgent:
             "edit_file",
             "delete_file",
             "append_file",
+            "move_path",
+            "copy_path",
+            "rename_path",
         }
 
         if any(item["action"] in write_actions for item in executor_actions):

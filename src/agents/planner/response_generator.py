@@ -1,15 +1,18 @@
 from ollama_client import OllamaClient
 import prompts
 
+
 class ResponseGenerator:
     def __init__(self, memory=None, reasoning_model: str | None = None, debug: bool = True):
         self.memory = memory
         self.debug = debug
         self.reasoning_client = OllamaClient(model=reasoning_model, supports_think=True)
 
+
     def _debug(self, label: str, value) -> None:
         if self.debug:
             print(f"[RESPONSE GENERATOR DEBUG] {label}: {value}")
+
 
     def _get_context(self) -> str:
         if self.memory is None:
@@ -20,6 +23,23 @@ class ResponseGenerator:
         except AttributeError:
             return ""
 
+
+    def _ask_reasoning_model(self, prompt: str, system_prompt: str, temperature: float, debug_label: str, think: str = "medium") -> str:
+        result = self.reasoning_client.ask(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            think=think,
+        )
+
+        if not result.ok:
+            self._debug(f"{debug_label} ERROR", result.error)
+            return result.error
+
+        self._debug(debug_label, result.content)
+        return result.content
+
+
     def transform_content(self, prompt: str, source_text: str, transformation: str) -> str:
         user_prompt = (
             f"Original user request:\n{prompt}\n\n"
@@ -27,14 +47,12 @@ class ResponseGenerator:
             f"Source text:\n{source_text}"
         )
 
-        result = self.reasoning_client.ask(
+        return self._ask_reasoning_model(
             prompt=user_prompt,
             system_prompt=prompts.response_transformation_prompt,
             temperature=0,
-            think="medium"
+            debug_label="TRANSFORM RESULT",
         )
-        self._debug("TRANSFORM RESULT", result)
-        return result
 
 
     def build_source_text(self, plan: dict, context: str, execution_result: str) -> str:
@@ -59,6 +77,7 @@ class ResponseGenerator:
 
         return ""
 
+
     def generate_final_response(self, prompt: str, context: str = "", execution_result: str = "") -> str:
         """
         Generate a final user-facing response from gathered memory/tool results.
@@ -69,14 +88,13 @@ class ResponseGenerator:
             f"Execution result:\n{execution_result if execution_result else 'None'}"
         )
 
-        result = self.reasoning_client.ask(
+        return self._ask_reasoning_model(
             prompt=user_prompt,
             system_prompt=prompts.final_response_prompt,
             temperature=0.2,
-            think="medium"
+            debug_label="FINAL RESPONSE",
         )
-        self._debug("FINAL RESPONSE", result)
-        return result
+
 
     def generate_file_content(self, prompt: str) -> str:
         context = self._get_context()
@@ -90,14 +108,13 @@ class ResponseGenerator:
             f"User request:\n{prompt}"
         )
 
-        result = self.reasoning_client.ask(
+        return self._ask_reasoning_model(
             prompt=user_prompt,
             system_prompt=prompts.file_generation_prompt,
             temperature=0.3,
-            think="medium"
+            debug_label="GENERATED FILE CONTENT",
         )
-        self._debug("GENERATED FILE CONTENT", result)
-        return result
+
 
     def improve_file_content(self, prompt: str, existing_content: str, instruction: str) -> str:
         context = self._get_context()
@@ -108,11 +125,9 @@ class ResponseGenerator:
             f"Existing file content:\n{existing_content}"
         )
 
-        result = self.reasoning_client.ask(
+        return self._ask_reasoning_model(
             prompt=user_prompt,
             system_prompt=prompts.file_improvement_prompt,
             temperature=0.3,
-            think="medium"
+            debug_label="IMPROVED FILE CONTENT",
         )
-        self._debug("IMPROVED FILE CONTENT", result)
-        return result

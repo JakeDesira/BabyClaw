@@ -12,7 +12,7 @@ def main() -> None:
     filesystem_guard = FilesystemGuard()
 
     memory = agents.MemoryAgent()
-    executor = agents.ExecutorAgent(memory=memory, filesystem_guard=filesystem_guard)
+    executor = agents.ExecutorAgent(memory=memory, filesystem_guard=filesystem_guard, debug=debug)
 
     response_generator = agents.ResponseGenerator(memory=memory, reasoning_model=reasoning_model, debug=debug)
     plan_executor = agents.PlanExecutor(memory=memory, executor=executor, filesystem_guard=filesystem_guard, response_generator=response_generator, debug=debug)

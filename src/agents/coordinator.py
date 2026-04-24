@@ -34,7 +34,7 @@ class CoordinatorAgent:
             return self.memory.get_short_term_context()
         except AttributeError:
             return ""
-        
+    
 
     def _looks_like_debug_fragment(self, prompt: str) -> bool:
         lower_prompt = prompt.lower().strip()
@@ -64,8 +64,36 @@ class CoordinatorAgent:
 
         if lower_prompt.startswith("file \"") or lower_prompt.startswith("traceback"):
             return True
-
+        
         return False
+    
+    def _looks_like_file_operation(self, prompt: str) -> bool:
+        lower_prompt = prompt.lower()
+
+        filesystem_action_words = [
+            "create",
+            "move",
+            "rename",
+            "delete",
+            "edit",
+            "append",
+            "write",
+            "organise",
+            "organize",
+            "copy",
+        ]
+
+        filesystem_object_words = [
+            "file",
+            "folder",
+            "directory",
+            "path",
+        ]
+
+        return (
+            any(action in lower_prompt for action in filesystem_action_words)
+            and any(obj in lower_prompt for obj in filesystem_object_words)
+        )
     
 
     def _is_short_follow_up(self, prompt: str) -> bool:
@@ -102,10 +130,26 @@ class CoordinatorAgent:
         result = self.client.ask(
             prompt=classifier_user_prompt,
             system_prompt=prompts.check_simple_question_prompt,
-            temperature=0.1
-        ).strip().upper()
+            temperature=0.1,
+        )
+    
+        if not result.ok:
+            self._debug("CLASSIFIER LLM ERROR", result.error)
+            return False
+        
+        return result.content.strip().upper().startswith("SIMPLE")
+    
 
-        return result.startswith("SIMPLE")
+    def _save_assistant_response(self, response: str) -> None:
+        """
+        Avoids repeating the same memory-save block multiple times.
+        """
+        if self.memory is None:
+            return
+        try:
+            self.memory.save_short_term(role="assistant", content=response)
+        except AttributeError:
+            pass
 
 
     def handle(self, prompt: str) -> str:
@@ -118,6 +162,8 @@ class CoordinatorAgent:
         self._debug("ORIGINAL PROMPT", prompt)
 
         if self._looks_like_debug_fragment(prompt):
+            is_simple = False
+        elif self._looks_like_file_operation(prompt):
             is_simple = False
         elif len(prompt) > 500:
             is_simple = False
@@ -138,34 +184,28 @@ class CoordinatorAgent:
                 f"User request:\n{prompt}"
             )
 
-            try:
-                response = self.client.ask(
-                    prompt=simple_user_prompt,
-                    system_prompt=prompts.simple_response_prompt,
-                    temperature=0.2
-                )
-            except Exception as e:
-                response = f"I hit an internal routing error: {e}"
+            response_result = self.client.ask(
+                prompt=simple_user_prompt,
+                system_prompt=prompts.simple_response_prompt,
+                temperature=0.2,
+            )
 
-            if self.memory is not None:
-                try:
-                    self.memory.save_short_term(role="assistant", content=response)
-                except AttributeError:
-                    pass
+            if response_result.ok:
+                response = response_result.content
+            else:
+                self._debug("SIMPLE RESPONSE LLM ERROR", response_result.error)
+                response = response_result.error
 
+            self._save_assistant_response(response)
             return response
 
         if self.planner is None or self.plan_executor is None or self.response_generator is None:
             response = (
-                "This task appears to require planning, but the planning pipeline has not been connected correctly yet."
+                "This task appears to require planning, but the planning pipeline "
+                "has not been connected correctly yet."
             )
 
-            if self.memory is not None:
-                try:
-                    self.memory.save_short_term(role="assistant", content=response)
-                except AttributeError:
-                    pass
-
+            self._save_assistant_response(response)
             return response
 
         current_prompt = prompt
@@ -195,40 +235,56 @@ class CoordinatorAgent:
             transformation = plan.get("transformation", "NONE")
 
             if response_mode == "RAW":
-                draft_result = source_text or execution_result or context or "I could not retrieve the requested content."
+                draft_result = (
+                    source_text
+                    or execution_result
+                    or context
+                    or "I could not retrieve the requested content."
+                )
 
             elif response_mode == "TRANSFORM":
                 if not source_text:
                     if plan.get("memory_action") == "get_previous_active_file_content":
-                        draft_result = "There is no other file in memory yet. Try reading a second file first."
+                        draft_result = (
+                            "There is no other file in memory yet. "
+                            "Try reading a second file first."
+                        )
                     else:
-                        draft_result = "I could not retrieve the content needed for transformation."
+                        draft_result = (
+                            "I could not retrieve the content needed for transformation."
+                        )
                 else:
                     draft_result = self.response_generator.transform_content(
                         prompt,
                         source_text,
-                        transformation
+                        transformation,
                     )
 
             elif response_mode == "ANSWER":
                 draft_result = self.response_generator.generate_final_response(
                     prompt=prompt,
                     context=context,
-                    execution_result=execution_result
+                    execution_result=execution_result,
                 )
 
             elif response_mode == "EXECUTE":
                 if not source_text:
-                    draft_result = "I could not retrieve the content needed to execute the instructions."
+                    draft_result = (
+                        "I could not retrieve the content needed to execute the instructions."
+                    )
                 else:
                     draft_result = self.response_generator.transform_content(
                         prompt,
                         source_text,
-                        "EXECUTE_INSTRUCTIONS"
+                        "EXECUTE_INSTRUCTIONS",
                     )
 
             else:
-                draft_result = execution_result or context or "I understood the request, but I could not complete it reliably yet."
+                draft_result = (
+                    execution_result
+                    or context
+                    or "I understood the request, but I could not complete it reliably yet."
+                )
 
             last_result = draft_result
             self._debug("DRAFT RESULT", draft_result)
@@ -250,10 +306,6 @@ class CoordinatorAgent:
 
         response = last_result
 
-        if self.memory is not None:
-            try:
-                self.memory.save_short_term(role="assistant", content=response)
-            except AttributeError:
-                pass
+        self._save_assistant_response(response)
 
         return response

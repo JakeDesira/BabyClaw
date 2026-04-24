@@ -1,6 +1,12 @@
 import os
+from dataclasses import dataclass
 from ollama import Client
 
+@dataclass
+class LLMResponse:
+    ok: bool
+    content: str = ""
+    error: str = ""
 
 class OllamaClient:
     def __init__(self, model: str | None = None, supports_think: bool = False):
@@ -16,37 +22,47 @@ class OllamaClient:
         self.client = Client(host=self.host)
         self.supports_think = supports_think
 
-    def ask(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None, think: str | bool | None = None) -> str:
-        """
-        Send a prompt to the configured Ollama model and return the response text.
-        """
+    def _build_request_args(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None, think: str | bool | None = None) -> dict:
         messages = []
 
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
 
         messages.append({"role": "user", "content": prompt})
-        
-        # Implemented so that if another model is used doesn't support the "think" option, it can be set to None and ignored in the request
+
         request_args = {
             "model": self.model,
             "messages": messages,
         }
-       
-        # For creative tasks, a higher temperature can be used. 
-        # For more deterministic responses, a lower temperature is better.
+
         options = {}
+
         if temperature is not None:
             options["temperature"] = temperature
 
         if options:
             request_args["options"] = options
-        
+
         if think is not None and self.supports_think:
             request_args["think"] = think
 
+        return request_args
+
+
+    def ask(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None, think: str | bool | None = None) -> LLMResponse:
+        """
+        Send a prompt to the configured Ollama model and return a structured response.
+        """
+        request_args = self._build_request_args(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            think=think,
+        )
+
         try:
             response = self.client.chat(**request_args)
-            return response["message"]["content"]
+            content = response["message"]["content"]
+            return LLMResponse(ok=True, content=content)
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return LLMResponse(ok=False, error=f"Error communicating with Ollama: {e}")
