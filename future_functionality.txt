@@ -4,6 +4,6 @@ Others:
 - reviewer is only set for planner
 
 Requirements:
-- Add long term memory
 - check about image support
 - Add whatsapp capability
+- Backup reviewer failer

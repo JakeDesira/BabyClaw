@@ -2,11 +2,14 @@ from pathlib import Path
 
 
 class PlanExecutor:
-    def __init__(self, memory=None, executor=None, filesystem_guard=None, response_generator=None, debug: bool = True):
+    def __init__(self, memory=None, executor=None, filesystem_guard=None, response_generator=None, execution_verifier=None, transaction_manager=None, debug: bool = True):
         self.memory = memory
         self.executor = executor
         self.filesystem_guard = filesystem_guard
         self.response_generator = response_generator
+        self.execution_verifier = execution_verifier
+        self.transaction_manager = transaction_manager
+        self._last_write_input = ""
         self.debug = debug
 
 
@@ -62,11 +65,34 @@ class PlanExecutor:
         return str(candidate)
 
 
+    def _plan_has_write_actions(self, plan: dict) -> bool:
+        write_actions = {
+            "create_file",
+            "write_file",
+            "append_file",
+            "delete_file",
+            "edit_file",
+            "create_directory",
+            "move_path",
+            "copy_path",
+            "rename_path",
+        }
+
+        for item in plan.get("executor_actions", []):
+            if item.get("action") in write_actions:
+                return True
+
+        return False
+
+
     def _prepare_create_file_action(self, prompt: str, action_input: str, previous_results: list[str] | None = None) -> str:
         parts = action_input.split("::", 1)
         filepath = parts[0].strip()
-
         filepath = self._resolve_relative_path(filepath)
+
+        if len(parts) == 2:
+            content = parts[1]
+            return f"{filepath}::{content}"
 
         if self.response_generator is None:
             raise ValueError("ResponseGenerator is required for create_file actions.")
@@ -165,6 +191,8 @@ class PlanExecutor:
         )
 
         write_input = f"{filepath}::{improved}"
+        self._last_write_input = write_input
+
         write_result = self.executor.handle("write_file", write_input, prompt)
 
         if write_result.startswith("File updated:"):
@@ -199,7 +227,23 @@ class PlanExecutor:
 
         context = ""
         execution_results = []
+        user_visible_results = []
         error = ""
+        snapshot_result = ""
+        quiet_actions = {"read_file", "view_file"}
+
+        if self.transaction_manager is not None and self._plan_has_write_actions(plan):
+            snapshot_result = self.transaction_manager.snapshot_active_directory()
+            self._debug("SNAPSHOT RESULT", snapshot_result)
+
+            if snapshot_result.startswith("Error"):
+                return {
+                    "ok": False,
+                    "context": "",
+                    "execution_result": snapshot_result,
+                    "source_text": snapshot_result,
+                    "error": snapshot_result,
+                }
 
         if plan.get("needs_memory") and self.memory is not None:
             context = self.memory.handle(
@@ -230,8 +274,39 @@ class PlanExecutor:
                 if step_result is None:
                     step_result = f"Error: Executor action '{action}' returned no result."
 
+                verification_result = None
+
                 if step_result.startswith("EDIT_READY::"):
                     step_result = self._handle_edit_ready(step_result, prompt)
+
+                    if self.execution_verifier is not None and step_result.startswith("File updated:"):
+                        verification_result = self.execution_verifier.verify_action(
+                            "write_file",
+                            self._last_write_input,
+                            step_result,
+                        )
+                else:
+                    if self.execution_verifier is not None:
+                        verification_result = self.execution_verifier.verify_action(
+                            action,
+                            resolved_input,
+                            step_result,
+                        )
+
+                if verification_result is not None:
+                    self._debug("VERIFICATION RESULT", verification_result)
+
+                    if not verification_result.get("ok", False):
+                        error = verification_result.get("feedback", "Verification failed.")
+                        execution_results.append(error)
+                        user_visible_results.append(error)
+
+                        if self.transaction_manager is not None:
+                            rollback_result = self.transaction_manager.rollback_last_snapshot()
+                            execution_results.append(rollback_result)
+                            user_visible_results.append(rollback_result)
+
+                        break
 
                 self._remember_created_file(action, resolved_input, step_result)
 
@@ -243,9 +318,13 @@ class PlanExecutor:
 
                 if step_result.startswith("Error") or step_result.startswith("Access denied"):
                     error = step_result
+                    user_visible_results.append(step_result)
                     break
 
-        execution_result = "\n".join(execution_results).strip()
+                if action not in quiet_actions or len(actions) == 1:
+                    user_visible_results.append(step_result)
+
+        execution_result = "\n".join(user_visible_results).strip()
 
         source_text = ""
 

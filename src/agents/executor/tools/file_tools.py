@@ -4,7 +4,7 @@ from pathlib import Path
 from pypdf import PdfReader
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(__file__).resolve().parents[3]
 INPUT_DIR = BASE_DIR / "media_input"
 TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".py", ".html", ".css", ".js"}
 

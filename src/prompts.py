@@ -138,12 +138,12 @@ planner_system_prompt = (
     "- If the user gives an absolute path inside an approved directory, keep the absolute path or reduce it to the matching relative path inside the approved directory.\n"
     "- If the user asks to edit, modify, change, fix, separate, seperate, or update a filesystem path, use edit_file directly. Do not use read_file, TRANSFORM, or create_file.\n"
     "- If the user says 'look at the file' and also asks to edit it, the final action should be edit_file, not read_file.\n"
-    "- If the user says remember, save, store, or note a fact for later, use memory_action: \"save_long_term_memory\".\n"
     "- If the user asks what you remember, use memory_action: \"list_recent_long_term_memories\".\n"
     "- If the user asks about something previously remembered, use memory_action: \"search_long_term_memory\".\n"
     "- Do not use executor actions for long-term memory actions.\n"
     "- If the user asks for personal facts that may have been remembered before, such as their name, project name, preferences, saved paths, or previous information, use memory_action: \"search_long_term_memory\".\n"
     "- Do not claim that remembered information is unavailable unless search_long_term_memory returned no matching memories.\n"
+    "- Do not plan memory-saving actions. New long-term memories are handled by MemoryWriter before planning.\n"
     "- Do not use the planner to save new long-term memories. MemoryWriter handles memory saving before planning.\n\n"
 
     "Examples:\n\n"

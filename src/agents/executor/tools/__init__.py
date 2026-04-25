@@ -22,3 +22,5 @@ from .directory_tools import (
     copy_path,
     rename_path,
 )
+
+from .transaction_manager import TransactionManager

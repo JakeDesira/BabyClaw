@@ -4,7 +4,7 @@ import json
 
 from ollama_client import OllamaClient
 import prompts
-from tools.file_tools import list_input_files
+import agents.executor.tools as tools
 
 
 class PlannerAgent:
@@ -37,6 +37,42 @@ class PlannerAgent:
             raise ValueError("No JSON object found in planner response.")
 
         return cleaned[start:end + 1]
+    
+    def _resolve_relative_path(self, path_value: str, must_exist: bool = False) -> str:
+        path_value = path_value.strip().strip("'\"")
+
+        if not path_value:
+            return path_value
+
+        path_value = path_value.replace("\\", "/")
+        path = Path(path_value).expanduser()
+
+        if path.is_absolute():
+            return str(path)
+
+        approved_dirs = self._get_approved_directories()
+
+        if not approved_dirs:
+            return path_value
+
+        base_dir = Path(approved_dirs[-1])
+        parts = path.parts
+
+        if parts and parts[0].lower() == base_dir.name.lower():
+            path = Path(*parts[1:])
+
+        candidate = base_dir / path
+
+        if must_exist:
+            if candidate.exists():
+                return str(candidate)
+
+            matches = list(base_dir.rglob(path.name))
+
+            if len(matches) >= 1:
+                return str(matches[0])
+
+        return str(candidate)
         
     def _summarise_directory_tree(self, root: Path, max_depth: int = 3, max_entries: int = 100) -> str:
         lines = []
@@ -121,7 +157,7 @@ class PlannerAgent:
     
 
     def _build_files_context(self) -> str:
-        available_files = list_input_files()
+        available_files = tools.list_input_files()
 
         if not available_files:
             return "No files available."
@@ -145,11 +181,36 @@ class PlannerAgent:
         if not value:
             return False
 
+        possible_path = value.split("::", 1)[0].strip()
+
         return (
-            "/" in value
-            or "\\" in value
-            or value.startswith("~")
-            or value.startswith("/Users/")
+            "/" in possible_path
+            or "\\" in possible_path
+            or possible_path.startswith("~")
+            or possible_path.startswith("/Users/")
+            or Path(possible_path).suffix != ""
+        )
+    
+
+    def _looks_like_placeholder(self, value: str) -> bool:
+        cleaned = value.strip().lower()
+
+        if not cleaned:
+            return False
+
+        placeholder_markers = [
+            "content of",
+            "converted to",
+            "same content",
+            "same contents",
+            "placeholder",
+            "to be generated",
+        ]
+
+        return (
+            cleaned.startswith("[")
+            and cleaned.endswith("]")
+            and any(marker in cleaned for marker in placeholder_markers)
         )
     
     
@@ -328,30 +389,53 @@ class PlannerAgent:
             action = item.get("action", "")
             action_input = item.get("input", "")
 
-            if not self._looks_like_filesystem_path(action_input):
-                continue
+            if self._looks_like_filesystem_path(action_input):
+                cleaned_path = action_input.replace("\\", "/").strip().strip("'\"")
 
-            cleaned_path = action_input.replace("\\", "/").strip().strip("'\"")
+                approved_dirs = self._get_approved_directories()
 
-            approved_dirs = self._get_approved_directories()
+                if approved_dirs:
+                    active_root_name = Path(approved_dirs[-1]).name.lower()
+                    parts = Path(cleaned_path).parts
 
-            if approved_dirs:
-                active_root_name = Path(approved_dirs[-1]).name.lower()
-                parts = Path(cleaned_path).parts
+                    if parts and parts[0].lower() == active_root_name:
+                        cleaned_path = str(Path(*parts[1:]))
 
-                if parts and parts[0].lower() == active_root_name:
-                    cleaned_path = str(Path(*parts[1:]))
+                if action == "read_file" and user_wants_edit:
+                    item["action"] = "edit_file"
+                    item["input"] = (
+                        f"{cleaned_path}::"
+                        "Edit the existing file in place. "
+                    )
 
-            if action == "read_file" and user_wants_edit:
-                item["action"] = "edit_file"
-                item["input"] = (
-                    f"{cleaned_path}::"
-                    "Edit the existing file in place. "
-                )
+                elif action == "read_file" and user_wants_read:
+                    item["action"] = "view_file"
+                    item["input"] = cleaned_path
 
-            elif action == "read_file" and user_wants_read:
-                item["action"] = "view_file"
-                item["input"] = cleaned_path
+            action = item.get("action", "")
+            action_input = item.get("input", "")
+
+            if action == "write_file":
+                parts = action_input.split("::", 1)
+                filepath = parts[0].strip()
+                content = parts[1] if len(parts) > 1 else ""
+
+                resolved = self._resolve_relative_path(filepath)
+
+                if not Path(resolved).exists():
+                    item["action"] = "create_file"
+
+                    if content and not self._looks_like_placeholder(content):
+                        item["input"] = f"{filepath}::{content}"
+                    else:
+                        item["input"] = filepath
+
+            if action == "read_file":
+                candidate = self._resolve_relative_path(action_input, must_exist=True)
+
+                if Path(candidate).exists():
+                    item["action"] = "view_file"
+                    item["input"] = action_input
 
         plan["executor_actions"] = executor_actions
 
@@ -396,6 +480,7 @@ class PlannerAgent:
             "create_directory",
             "create_file",
             "edit_file",
+            "write_file",
             "delete_file",
             "append_file",
             "move_path",

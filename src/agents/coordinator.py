@@ -327,6 +327,8 @@ class CoordinatorAgent:
 
         if self._looks_like_debug_fragment(prompt):
             is_simple = False
+        elif self._looks_like_directory_listing(prompt):
+            is_simple = False
         elif self._looks_like_file_operation(prompt):
             is_simple = False
         elif self._looks_like_direct_writing_task(prompt):

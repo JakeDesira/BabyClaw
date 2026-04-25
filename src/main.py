@@ -3,13 +3,15 @@ from pathlib import Path
 from filesystem_guard import FilesystemGuard
 import agents
 
-
 def main() -> None:
     planning_model = "gemma4"
     reasoning_model = "gpt-oss:20b"
     debug = True
 
     filesystem_guard = FilesystemGuard()
+
+    transaction_manager = agents.TransactionManager(filesystem_guard=filesystem_guard, snapshot_root=Path.home() / ".babyclaw_snapshots")
+    execution_verifier = agents.ExecutionVerifier(filesystem_guard=filesystem_guard, debug=debug)
 
     memory_db_path = Path("src/agents/memory/babyclaw_memory.db")
     memory_store = agents.SQLiteMemoryStore(memory_db_path)
@@ -32,7 +34,7 @@ def main() -> None:
     executor = agents.ExecutorAgent(memory=memory, filesystem_guard=filesystem_guard, debug=debug)
 
     response_generator = agents.ResponseGenerator(memory=memory, reasoning_model=reasoning_model, debug=debug)
-    plan_executor = agents.PlanExecutor(memory=memory, executor=executor, filesystem_guard=filesystem_guard, response_generator=response_generator, debug=debug)
+    plan_executor = agents.PlanExecutor(memory=memory, executor=executor, filesystem_guard=filesystem_guard, response_generator=response_generator, execution_verifier=execution_verifier, transaction_manager=transaction_manager, debug=debug)
 
     reviewer = agents.ReviewerAgent(model=reasoning_model, debug=debug)
 
@@ -48,6 +50,11 @@ def main() -> None:
         if prompt.lower() in {"exit", "quit"}:
             print("Exiting Baby Claw.")
             break
+        
+        if prompt.lower() == "undo":
+            result = transaction_manager.rollback_last_snapshot()
+            print(f"\nBaby Claw: {result}\n")
+            continue
 
         if prompt.lower().startswith("grant access "):
             raw_path = prompt[len("grant access "):].strip().strip("\"'")

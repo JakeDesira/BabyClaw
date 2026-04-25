@@ -380,9 +380,6 @@ class MemoryAgent:
         if action == "get_previous_active_file_type":
             return self.get_previous_active_file_type()
 
-        if action == "save_long_term_memory":
-            return self.save_long_term_memory(action_input)
-
         if action == "search_long_term_memory":
             return self.search_long_term_memory(action_input)
 
