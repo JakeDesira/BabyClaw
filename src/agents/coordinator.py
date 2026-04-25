@@ -2,12 +2,14 @@ from ollama_client import OllamaClient
 import prompts
 
 class CoordinatorAgent:
-    def __init__(self, planner=None, plan_executor=None, response_generator=None, reviewer=None, memory=None, model: str | None = None, debug: bool = True):
+    def __init__(self, planner=None, plan_executor=None, response_generator=None, reviewer=None, memory=None, memory_router=None, memory_writer=None, model: str | None = None, debug: bool = True):
         """
         Entry point of the Baby Claw architecture.
 
         The Coordinator decides whether a request is simple enough to answer
         directly or whether it should be delegated into the planning pipeline.
+        Memory retrieval is checked separately because simple requests may still
+        require remembered context.
         """
         self.client = OllamaClient(model=model)
         self.planner = planner
@@ -15,6 +17,8 @@ class CoordinatorAgent:
         self.response_generator = response_generator
         self.reviewer = reviewer
         self.memory = memory
+        self.memory_router = memory_router
+        self.memory_writer = memory_writer
         self.debug = debug
 
 
@@ -34,6 +38,104 @@ class CoordinatorAgent:
             return self.memory.get_short_term_context()
         except AttributeError:
             return ""
+        
+    def _save_extracted_memories(self, prompt: str) -> str:
+        """
+        Use MemoryWriter to extract durable facts from the current prompt
+        and save them through MemoryAgent.
+        """
+        if self.memory is None or self.memory_writer is None:
+            return ""
+
+        short_term_context = self._get_short_term_context()
+
+        try:
+            extraction = self.memory_writer.extract(
+                user_prompt=prompt,
+                short_term_context=short_term_context,
+            )
+        except Exception as e:
+            self._debug("MEMORY WRITER ERROR", e)
+            return ""
+
+        self._debug("MEMORY WRITER DECISION", extraction)
+
+        if not extraction.get("should_save", False):
+            return ""
+
+        saved_results = []
+
+        for memory_item in extraction.get("memories", []):
+            content = memory_item.get("content", "").strip()
+            memory_type = memory_item.get("memory_type", "general")
+            importance = memory_item.get("importance", 1)
+
+            if not content:
+                continue
+
+            try:
+                result = self.memory.save_long_term_memory_if_new(
+                    content=content,
+                    memory_type=memory_type,
+                    source="conversation",
+                    importance=importance,
+                )
+                saved_results.append(result)
+            except Exception as e:
+                saved_results.append(f"Error saving memory '{content}': {e}")
+
+        if not saved_results:
+            return ""
+
+        return "\n".join(saved_results)
+        
+
+    def _get_relevant_long_term_memory(self, prompt: str) -> str:
+        """
+        Retrieve long-term memory when the memory router thinks it may help.
+
+        This is intentionally separate from the planner.
+        A request can be simple but still need memory, for example:
+        - What is my name?
+        """
+        if self.memory is None or self.memory_router is None:
+            return ""
+
+        short_term_context = self._get_short_term_context()
+
+        try:
+            decision = self.memory_router.check(
+                user_prompt=prompt,
+                short_term_context=short_term_context,
+            )
+        except Exception as e:
+            self._debug("MEMORY ROUTER ERROR", e)
+            return ""
+
+        self._debug("MEMORY ROUTER DECISION", decision)
+
+        if not decision.get("needs_memory", False):
+            return ""
+
+        search_query = decision.get("search_query", "").strip()
+
+        if not search_query:
+            search_query = prompt
+
+        try:
+            memory_context = self.memory.search_long_term_memory(search_query)
+        except AttributeError:
+            return ""
+        except Exception as e:
+            self._debug("LONG-TERM MEMORY SEARCH ERROR", e)
+            return ""
+
+        self._debug("RETRIEVED LONG-TERM MEMORY", memory_context)
+
+        if memory_context.strip() == "No matching long-term memories found.":
+            return ""
+
+        return memory_context
     
 
     def _looks_like_debug_fragment(self, prompt: str) -> bool:
@@ -95,6 +197,61 @@ class CoordinatorAgent:
             and any(obj in lower_prompt for obj in filesystem_object_words)
         )
     
+
+    def _looks_like_direct_writing_task(self, prompt: str) -> bool:
+        lower_prompt = prompt.lower()
+
+        writing_words = [
+            "write",
+            "draft",
+            "compose",
+            "rewrite",
+            "re-write",
+            "generate",
+        ]
+
+        writing_objects = [
+            "email",
+            "message",
+            "letter",
+            "reply",
+            "paragraph",
+            "post",
+        ]
+
+        tool_or_file_words = [
+            "file",
+            "folder",
+            "directory",
+            "save",
+            "send",
+            "append",
+            "overwrite",
+            "edit the file",
+            "write it to",
+            "put it in",
+        ]
+
+        return (
+            any(word in lower_prompt for word in writing_words)
+            and any(obj in lower_prompt for obj in writing_objects)
+            and not any(word in lower_prompt for word in tool_or_file_words)
+        )
+    
+
+    def _looks_like_directory_listing(self, prompt: str) -> bool:
+        lower_prompt = prompt.lower()
+
+        return (
+            "list" in lower_prompt
+            and (
+                "approved directory" in lower_prompt
+                or "approved folder" in lower_prompt
+                or "current directory" in lower_prompt
+                or "current folder" in lower_prompt
+            )
+        )
+
 
     def _is_short_follow_up(self, prompt: str) -> bool:
         lower_prompt = prompt.lower().strip()
@@ -161,10 +318,19 @@ class CoordinatorAgent:
 
         self._debug("ORIGINAL PROMPT", prompt)
 
+        memory_save_result = self._save_extracted_memories(prompt)
+
+        if memory_save_result:
+            self._debug("MEMORY SAVE RESULT", memory_save_result)
+
+        long_term_memory_context = self._get_relevant_long_term_memory(prompt)
+
         if self._looks_like_debug_fragment(prompt):
             is_simple = False
         elif self._looks_like_file_operation(prompt):
             is_simple = False
+        elif self._looks_like_direct_writing_task(prompt):
+            is_simple = True
         elif len(prompt) > 500:
             is_simple = False
         elif self._is_short_follow_up(prompt) and self._get_short_term_context():
@@ -180,7 +346,10 @@ class CoordinatorAgent:
             short_term_context = self._get_short_term_context()
 
             simple_user_prompt = (
-                f"Recent context:\n{short_term_context}\n\n"
+                f"Recent conversation context:\n"
+                f"{short_term_context if short_term_context else 'None'}\n\n"
+                f"Retrieved long-term memory:\n"
+                f"{long_term_memory_context if long_term_memory_context else 'None'}\n\n"
                 f"User request:\n{prompt}"
             )
 
@@ -261,9 +430,25 @@ class CoordinatorAgent:
                     )
 
             elif response_mode == "ANSWER":
+                combined_context_parts = []
+
+                if long_term_memory_context:
+                    combined_context_parts.append(
+                        "Retrieved long-term memory:\n"
+                        + long_term_memory_context
+                    )
+
+                if context:
+                    combined_context_parts.append(
+                        "Planner memory/tool context:\n"
+                        + context
+                    )
+
+                combined_context = "\n\n".join(combined_context_parts)
+
                 draft_result = self.response_generator.generate_final_response(
                     prompt=prompt,
-                    context=context,
+                    context=combined_context,
                     execution_result=execution_result,
                 )
 

@@ -36,6 +36,8 @@ class MemoryAgent:
             "[RESPONSE GENERATOR DEBUG]",
             "[REVIEWER DEBUG]",
             "[EXECUTOR DEBUG]",
+            "[MEMORY ROUTER DEBUG]",
+            "[MEMORY WRITER DEBUG]",
         )
 
         if cleaned_content.startswith(debug_prefixes):
@@ -145,13 +147,50 @@ class MemoryAgent:
 
         except Exception as e:
             return f"Error saving long-term memory: {e}"
+        
+
+    def save_long_term_memory_if_new(self, content: str, memory_type: str = "general", source: str = "conversation", importance: int = 1) -> str:
+        """
+        Save a long-term memory only if the exact same content does not already exist.
+        """
+        cleaned_content = content.strip()
+
+        if not cleaned_content:
+            return "Error: Cannot save an empty memory."
+
+        existing = self.memory_store.search_memories(
+            query=cleaned_content,
+            limit=20,
+        )
+
+        for memory in existing:
+            if (
+                memory.get("memory_type") == memory_type
+                and memory.get("content") == cleaned_content
+            ):
+                return f"Memory already exists [{memory['id']}]: {cleaned_content}"
+
+        return self.save_long_term_memory(
+            content=cleaned_content,
+            memory_type=memory_type,
+            source=source,
+            importance=importance,
+        )
 
 
-    def search_long_term_memory(self, query: str, limit: int = 5) -> str:
+    def search_long_term_memory(self, query: str, limit: int = 5, include_paths: bool = False) -> str:
         """
         Search long-term memory using the SQLite memory store.
         """
         memories = self.memory_store.search_memories(query=query, limit=limit)
+
+        if not include_paths:
+            memories = [
+                memory
+                for memory in memories
+                if memory.get("memory_type") != "accessible_path"
+            ]
+
         return self.memory_store.format_memories(memories)
 
 

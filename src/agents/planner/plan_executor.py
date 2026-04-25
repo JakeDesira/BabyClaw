@@ -125,7 +125,16 @@ class PlanExecutor:
 
 
     def _prepare_action_input(self, prompt: str, action: str, action_input: str, previous_results: list[str] | None = None) -> str:
-        if action in ("create_directory", "list_directory"):
+        if action == "create_directory":
+            return self._resolve_relative_path(action_input)
+
+        if action == "list_directory":
+            if not action_input.strip():
+                approved_dirs = self._get_approved_directories()
+
+                if approved_dirs:
+                    return approved_dirs[-1]
+
             return self._resolve_relative_path(action_input)
 
         if action == "create_file":

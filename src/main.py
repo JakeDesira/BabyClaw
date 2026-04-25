@@ -11,8 +11,10 @@ def main() -> None:
 
     filesystem_guard = FilesystemGuard()
 
-    memory = agents.MemoryAgent()
-
+    memory_db_path = Path("src/agents/memory/babyclaw_memory.db")
+    memory_store = agents.SQLiteMemoryStore(memory_db_path)
+    memory = agents.MemoryAgent(memory_store=memory_store)
+    memory_writer = agents.MemoryWriter(model=planning_model,debug=debug)
 
     saved_paths = memory.get_saved_accessible_path_values()
 
@@ -35,8 +37,10 @@ def main() -> None:
     reviewer = agents.ReviewerAgent(model=reasoning_model, debug=debug)
 
     planner = agents.PlannerAgent(memory=memory, planning_model=planning_model, filesystem_guard=filesystem_guard, debug=debug)
+
+    memory_router = agents.MemoryRouter(model=planning_model, debug=debug)
     
-    coordinator = agents.CoordinatorAgent(planner=planner, plan_executor=plan_executor, response_generator=response_generator, reviewer=reviewer, memory=memory, model=planning_model, debug=debug)
+    coordinator = agents.CoordinatorAgent(planner=planner, plan_executor=plan_executor, response_generator=response_generator, reviewer=reviewer, memory=memory, model=planning_model, memory_router=memory_router, memory_writer=memory_writer, debug=debug)
 
     while True:
         prompt = input("You: ").strip()

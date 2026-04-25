@@ -138,6 +138,7 @@ class PlannerAgent:
             + "\n".join(f"- {directory}" for directory in approved_dirs)
         )
     
+    
     def _looks_like_filesystem_path(self, value: str) -> bool:
         value = value.strip()
 
@@ -238,7 +239,6 @@ class PlannerAgent:
             "get_last_active_file_content",
             "get_previous_active_file_name",
             "get_previous_active_file_content",
-            "save_long_term_memory",
             "search_long_term_memory",
             "list_recent_long_term_memories",
             "delete_long_term_memory",
@@ -438,5 +438,17 @@ class PlannerAgent:
             if action in ("move_path", "copy_path") and "::" not in action_input and ":" in action_input:
                 source, destination = action_input.split(":", 1)
                 item["input"] = f"{source.strip()}::{destination.strip()}"
+
+        last_active_content_actions = {
+            "get_last_active_file_content",
+            "get_previous_active_file_content",
+        }
+
+        if plan.get("memory_action") in last_active_content_actions:
+            if any(word in lower_prompt for word in ["show", "display", "print", "content"]):
+                plan["response_mode"] = "RAW"
+                plan["target_source"] = "MEMORY"
+                plan["transformation"] = "NONE"
+                plan["needs_review"] = False
 
         return plan
