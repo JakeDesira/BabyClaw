@@ -11,6 +11,7 @@ WRITE_ACTIONS = {
     "edit_file",
     "create_directory",
     "move_path",
+    "move_directory_contents",
     "copy_path",
     "rename_path",
 }
@@ -19,7 +20,7 @@ WRITE_ACTIONS = {
 class TransactionManager:
     def __init__(self, filesystem_guard, snapshot_root: str | Path = ".babyclaw_snapshots"):
         self.filesystem_guard = filesystem_guard
-        self.snapshot_root = Path(snapshot_root).resolve()
+        self.snapshot_root = Path(snapshot_root).expanduser().resolve()
         self.snapshot_root.mkdir(parents=True, exist_ok=True)
 
         self.last_snapshot_path: Path | None = None
@@ -27,11 +28,24 @@ class TransactionManager:
 
 
     def has_write_actions(self, actions: list[dict]) -> bool:
-        for item in actions:
-            if item.get("action") in WRITE_ACTIONS:
-                return True
+        return any(
+            item.get("action") in WRITE_ACTIONS
+            for item in actions
+        )
 
-        return False
+
+    def get_last_snapshot_path(self) -> str:
+        if self.last_snapshot_path is None:
+            return ""
+
+        return str(self.last_snapshot_path)
+
+
+    def get_last_target_path(self) -> str:
+        if self.last_target_path is None:
+            return ""
+
+        return str(self.last_target_path)
 
 
     def snapshot_active_directory(self) -> str:
@@ -40,53 +54,62 @@ class TransactionManager:
         if active_directory is None:
             return "Error: No active approved directory to snapshot."
 
-        active_directory = Path(active_directory).resolve()
+        return self.snapshot_directory(active_directory)
 
-        if not active_directory.exists() or not active_directory.is_dir():
-            return f"Error: Active directory does not exist: {active_directory}"
 
-        snapshot_id = uuid.uuid4().hex
-        snapshot_path = self.snapshot_root / snapshot_id
+    def snapshot_directory(self, directory_path: str | Path) -> str:
+        directory = Path(directory_path).expanduser().resolve()
 
-        shutil.copytree(active_directory, snapshot_path)
+        if not directory.exists() or not directory.is_dir():
+            return f"Error: Cannot snapshot non-directory path: {directory}"
 
-        self.last_snapshot_path = snapshot_path
-        self.last_target_path = active_directory
+        if not self.filesystem_guard.is_approved(directory):
+            return f"Error: Cannot snapshot unapproved directory: {directory}"
 
-        return f"Snapshot created: {snapshot_path}"
+        snapshot_path = self.snapshot_root / uuid.uuid4().hex
+
+        try:
+            shutil.copytree(directory, snapshot_path)
+
+            self.last_snapshot_path = snapshot_path
+            self.last_target_path = directory
+
+            return f"Snapshot created: {snapshot_path}"
+
+        except Exception as e:
+            self.last_snapshot_path = None
+            self.last_target_path = None
+
+            return f"Error creating snapshot: {e}"
 
 
     def rollback_last_snapshot(self) -> str:
         if self.last_snapshot_path is None or self.last_target_path is None:
             return "Nothing to undo. No snapshot is available."
 
-        if not self.last_snapshot_path.exists():
-            return "Undo failed. Snapshot no longer exists."
+        snapshot_path = Path(self.last_snapshot_path)
+        target_path = Path(self.last_target_path)
 
-        target = self.last_target_path
-        restore_temp = target.with_name(target.name + "_babyclaw_restore_temp")
+        if not snapshot_path.exists() or not snapshot_path.is_dir():
+            return f"Nothing to undo. Snapshot folder was not found: {snapshot_path}"
+
+        if not self.filesystem_guard.is_approved(target_path):
+            return f"Undo failed: target directory is no longer approved: {target_path}"
 
         try:
-            if restore_temp.exists():
-                shutil.rmtree(restore_temp)
+            if target_path.exists():
+                shutil.rmtree(target_path)
 
-            shutil.copytree(self.last_snapshot_path, restore_temp)
+            shutil.copytree(snapshot_path, target_path)
 
-            if target.exists():
-                shutil.rmtree(target)
+            self.clear_last_snapshot()
 
-            restore_temp.rename(target)
-
-            return f"Undo complete. Restored: {target}"
+            return f"Undo complete. Restored: {target_path}"
 
         except Exception as e:
             return f"Undo failed: {e}"
 
 
     def clear_last_snapshot(self) -> None:
-        """
-        Optional. You may choose not to delete snapshots immediately
-        so the user can still type undo after a completed operation.
-        """
         self.last_snapshot_path = None
         self.last_target_path = None

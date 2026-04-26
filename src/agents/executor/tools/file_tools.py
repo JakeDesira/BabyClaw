@@ -1,12 +1,27 @@
 import re
+import subprocess
+import sys
 from pathlib import Path
-
 from pypdf import PdfReader
 
 
-BASE_DIR = Path(__file__).resolve().parents[3]
-INPUT_DIR = BASE_DIR / "media_input"
+from paths import MEDIA_INPUT_DIR
+
+
+INPUT_DIR = MEDIA_INPUT_DIR
 TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".py", ".html", ".css", ".js"}
+
+SKIP_SEARCH_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".idea",
+    ".vscode",
+}
 
 
 def list_input_files() -> list[str]:
@@ -32,6 +47,51 @@ def _normalize_query(text: str) -> str:
     text = re.sub(r"[^\w\s.-]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _safe_rglob_by_name(root: Path, target_name: str, max_matches: int = 25) -> list[Path]:
+    """
+    Recursively search for files/directories by exact name while skipping heavy folders.
+    """
+    matches = []
+
+    try:
+        for candidate in root.rglob(target_name):
+            if any(part in SKIP_SEARCH_DIRS for part in candidate.parts):
+                continue
+
+            if candidate.exists():
+                matches.append(candidate)
+
+            if len(matches) >= max_matches:
+                break
+
+    except Exception:
+        return matches
+
+    return matches
+
+
+def _split_action_pair(action_input: str, action_name: str) -> tuple[str, str] | str:
+    """
+    Split low-level tool input in the format left::right.
+
+    Returns either:
+    - (left, right)
+    - error string
+    """
+    parts = action_input.split("::", 1)
+
+    if len(parts) != 2:
+        return f"Error: {action_name} requires 'filepath::content' format."
+
+    left, right = parts
+    left = left.strip()
+
+    if not left:
+        return f"Error: {action_name} requires a file path."
+
+    return left, right
 
 
 def find_file_in_input(filename: str) -> Path | None:
@@ -217,8 +277,7 @@ def read_file(path: str | Path) -> str:
     if suffix == ".pdf":
         return read_pdf_file(file_path)
 
-    return f"Error: Unsupported file type '{suffix or 'unknown'}' is not supported yet."
-
+    return f"Error: Unsupported file type '{suffix or 'unknown'}'."
 
 def read_multiple_files(filenames: list[str]) -> str:
     """
@@ -257,33 +316,26 @@ def view_guarded_file(path: str | Path, filesystem_guard) -> str:
 def create_guarded_file(action_input: str, filesystem_guard) -> str:
     """
     Create a file only if it is inside an approved directory.
-    Low-level expected format:
+    Expected format:
         filepath::content
-        
-    Note:
-        The planner should usually provide only the filepath.
-        PlanExecutor is responsible for generating the file content and converting
-        the action input into filepath::content before this tool is called.
     """
-    parts = action_input.split("::", 1)
+    pair = _split_action_pair(action_input, "create_file")
 
-    if len(parts) != 2:
-        return "Error: create_file requires 'filepath::content' format."
+    if isinstance(pair, str):
+        return pair
 
-    filepath, content = parts
-    filepath = filepath.strip()
+    filepath, content = pair
 
     safe = filesystem_guard.safe_path(filepath)
 
     if safe is None:
         return f"Access denied. '{filepath}' is not within an approved directory."
 
+    if safe.exists():
+        return f"Error: File already exists: {safe}"
+
     try:
         safe.parent.mkdir(parents=True, exist_ok=True)
-
-        if safe.exists():
-            return f"Error: File already exists: {safe}"
-
         safe.write_text(content, encoding="utf-8")
 
         return f"File created: {safe}"
@@ -295,24 +347,33 @@ def create_guarded_file(action_input: str, filesystem_guard) -> str:
 def append_guarded_file(action_input: str, filesystem_guard) -> str:
     """
     Append content to a file only if it is inside an approved directory.
-    Expected format: filepath::content
+    Expected format:
+        filepath::content
     """
-    parts = action_input.split("::", 1)
+    pair = _split_action_pair(action_input, "append_file")
 
-    if len(parts) != 2:
-        return "Error: append_file requires 'filepath::content' format."
+    if isinstance(pair, str):
+        return pair
 
-    filepath, content = parts
+    filepath, content = pair
+
     safe = filesystem_guard.safe_path(filepath)
 
     if safe is None:
         return f"Access denied. '{filepath}' is not within an approved directory."
 
+    if not safe.exists():
+        return f"Error: File does not exist: {safe}"
+
+    if not safe.is_file():
+        return f"Error: Path is not a file: {safe}"
+
     try:
-        with open(safe, "a", encoding="utf-8") as f:
-            f.write(content)
+        with safe.open("a", encoding="utf-8") as file:
+            file.write(content)
 
         return f"Content appended to: {safe}"
+
     except Exception as e:
         return f"Error appending to file: {e}"
 
@@ -342,14 +403,16 @@ def delete_guarded_file(path: str | Path, filesystem_guard) -> str:
 def prepare_guarded_edit_file(action_input: str, filesystem_guard) -> str:
     """
     Prepare a file for editing only if it is inside an approved directory.
-    Expected format: filepath::instruction
+    Expected format:
+        filepath::instruction
     """
-    parts = action_input.split("::", 1)
+    pair = _split_action_pair(action_input, "edit_file")
 
-    if len(parts) != 2:
-        return "Error: edit_file requires 'filepath::instruction' format."
+    if isinstance(pair, str):
+        return pair.replace("filepath::content", "filepath::instruction")
 
-    filepath, instruction = parts
+    filepath, instruction = pair
+
     safe = filesystem_guard.safe_path(filepath)
 
     if safe is None:
@@ -364,17 +427,26 @@ def prepare_guarded_edit_file(action_input: str, filesystem_guard) -> str:
     try:
         existing_content = safe.read_text(encoding="utf-8")
         return f"EDIT_READY::{safe}::{instruction}::{existing_content}"
+
     except Exception as e:
         return f"Error reading file for editing: {e}"
     
+    
 def write_guarded_file(action_input: str, filesystem_guard=None) -> str:
+    """
+    Overwrite an existing file only if it is inside an approved directory.
+    Expected format:
+        filepath::content
+    """
     if filesystem_guard is None:
         return "Access denied: no filesystem guard available."
 
-    if "::" not in action_input:
-        return "Error: write_file input must be filepath::content."
+    pair = _split_action_pair(action_input, "write_file")
 
-    file_path, content = action_input.split("::", 1)
+    if isinstance(pair, str):
+        return pair
+
+    file_path, content = pair
 
     safe_path = filesystem_guard.safe_path(file_path)
 
@@ -387,11 +459,17 @@ def write_guarded_file(action_input: str, filesystem_guard=None) -> str:
     if not safe_path.is_file():
         return f"Error: Path is not a file: {safe_path}"
 
-    safe_path.write_text(content, encoding="utf-8")
+    try:
+        safe_path.write_text(content, encoding="utf-8")
+        return f"File updated: {safe_path}"
 
-    return f"File updated: {safe_path}"
+    except Exception as e:
+        return f"Error writing file: {e}"
 
 def find_guarded_file(file_name: str, filesystem_guard=None) -> str:
+    """
+    Search for a file or directory inside approved directories.
+    """
     if filesystem_guard is None:
         return "Access denied: no filesystem guard available."
 
@@ -400,7 +478,7 @@ def find_guarded_file(file_name: str, filesystem_guard=None) -> str:
     if not approved_dirs:
         return "No approved directories available."
 
-    query = file_name.strip()
+    query = file_name.strip().strip("\"'")
 
     if not query:
         return "Error: No file name provided."
@@ -413,24 +491,23 @@ def find_guarded_file(file_name: str, filesystem_guard=None) -> str:
         if not root.exists() or not root.is_dir():
             continue
 
-        # If user gave a relative path, try it directly first.
         direct_candidate = root / query
 
         if direct_candidate.exists():
             matches.append(direct_candidate)
 
-        # Then search by final filename.
         name = Path(query).name
 
-        for candidate in root.rglob(name):
-            if candidate.exists():
-                matches.append(candidate)
+        if name:
+            matches.extend(_safe_rglob_by_name(root, name))
 
     unique_matches = []
 
     for match in matches:
-        if match not in unique_matches:
-            unique_matches.append(match)
+        resolved_match = match.resolve()
+
+        if resolved_match not in unique_matches:
+            unique_matches.append(resolved_match)
 
     if not unique_matches:
         return f"No matching file found for: {query}"
@@ -439,3 +516,58 @@ def find_guarded_file(file_name: str, filesystem_guard=None) -> str:
         return f"Found file: {unique_matches[0]}"
 
     return "Found multiple files:\n" + "\n".join(str(match) for match in unique_matches)
+
+def run_python_file(path: str | Path, filesystem_guard=None, timeout_seconds: int = 10) -> str:
+    """
+    Run an approved Python file and return stdout/stderr.
+
+    This is intentionally restricted:
+    - only approved paths
+    - only .py files
+    - timeout enforced
+    """
+    if filesystem_guard is None:
+        return "Access denied: no filesystem guard available."
+
+    safe = filesystem_guard.safe_path(path)
+
+    if safe is None:
+        return f"Access denied. '{path}' is not within an approved directory."
+
+    if not safe.exists():
+        return f"Error: Python file does not exist: {safe}"
+
+    if not safe.is_file():
+        return f"Error: '{safe}' is not a file."
+
+    if safe.suffix.lower() != ".py":
+        return f"Error: run_python_file only supports Python files, got '{safe.suffix or 'unknown'}'."
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(safe)],
+            cwd=str(safe.parent),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+
+        output = (
+            f"Return code: {result.returncode}\n"
+            f"STDOUT:\n{stdout if stdout else '(empty)'}\n\n"
+            f"STDERR:\n{stderr if stderr else '(empty)'}"
+        )
+
+        if result.returncode != 0:
+            return f"Error: Python file failed: {safe}\n\n{output}"
+
+        return f"Python file ran successfully: {safe}\n\n{output}"
+
+    except subprocess.TimeoutExpired:
+        return f"Error: Python file timed out after {timeout_seconds} seconds: {safe}"
+
+    except Exception as e:
+        return f"Error running Python file '{safe}': {e}"

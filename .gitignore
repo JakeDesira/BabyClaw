@@ -1,7 +1,6 @@
 .vscode
 __pycache__/
-src/media_input/*
-!src/media_input/.gitkeep
+media_input/*
 .DS_Store
 src/agents/memory/*.db
 src/agents/memory/*.db-shm

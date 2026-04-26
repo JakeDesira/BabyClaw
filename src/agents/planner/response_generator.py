@@ -1,10 +1,13 @@
+import re
+
 from ollama_client import OllamaClient
 import prompts
 
 
 class ResponseGenerator:
-    def __init__(self, memory=None, reasoning_model: str | None = None, debug: bool = True):
+    def __init__(self, memory=None, reasoning_model: str | None = None, reasoning_settings=None, debug: bool = True):
         self.memory = memory
+        self.reasoning_settings = reasoning_settings
         self.debug = debug
         self.reasoning_client = OllamaClient(model=reasoning_model, supports_think=True)
 
@@ -24,7 +27,10 @@ class ResponseGenerator:
             return ""
 
 
-    def _ask_reasoning_model(self, prompt: str, system_prompt: str, temperature: float, debug_label: str, think: str = "medium") -> str:
+    def _ask_reasoning_model(self, prompt: str, system_prompt: str, temperature: float, debug_label: str, think: str | None = None) -> str:
+        if think is None:
+            think = self.reasoning_settings.response_think if self.reasoning_settings else "medium"
+
         result = self.reasoning_client.ask(
             prompt=prompt,
             system_prompt=system_prompt,
@@ -38,6 +44,43 @@ class ResponseGenerator:
 
         self._debug(debug_label, result.content)
         return result.content
+
+
+    def _clean_file_output(self, content: str) -> str:
+        """
+        Clean common LLM formatting mistakes before writing generated content to files.
+        """
+        cleaned = content.strip()
+
+        if not cleaned:
+            return ""
+
+        cleaned = re.sub(
+            r"^```[a-zA-Z0-9_+-]*\s*",
+            "",
+            cleaned,
+        )
+
+        cleaned = re.sub(
+            r"\s*```$",
+            "",
+            cleaned,
+        )
+
+        bad_prefixes = [
+            "Here is the updated file:",
+            "Here is the complete file:",
+            "Here is the file:",
+            "Sure, here is the updated file:",
+            "Sure, here is the complete file:",
+            "Sure, here is the file:",
+        ]
+
+        for prefix in bad_prefixes:
+            if cleaned.lower().startswith(prefix.lower()):
+                cleaned = cleaned[len(prefix):].lstrip()
+
+        return cleaned
 
 
     def transform_content(self, prompt: str, source_text: str, transformation: str) -> str:
@@ -109,26 +152,34 @@ class ResponseGenerator:
             f"User request:\n{prompt}"
         )
 
-        return self._ask_reasoning_model(
+        generated = self._ask_reasoning_model(
             prompt=user_prompt,
             system_prompt=prompts.file_generation_prompt,
             temperature=0.3,
             debug_label="GENERATED FILE CONTENT",
         )
 
+        return self._clean_file_output(generated)
+
 
     def improve_file_content(self, prompt: str, existing_content: str, instruction: str) -> str:
-        context = self._get_context()
-
         user_prompt = (
-            f"Recent conversation context:\n{context}\n\n"
-            f"Improvement instruction:\n{instruction or prompt}\n\n"
+            f"User request:\n{prompt}\n\n"
+            f"Edit instruction for this file only:\n{instruction or prompt}\n\n"
+            "Important:\n"
+            "- You are editing ONE file only.\n"
+            "- Do not include content from other files.\n"
+            "- Do not include multiple file versions.\n"
+            "- Do not repeat the existing file after the improved version.\n"
+            "- Return exactly one complete final file.\n\n"
             f"Existing file content:\n{existing_content}"
         )
 
-        return self._ask_reasoning_model(
+        improved = self._ask_reasoning_model(
             prompt=user_prompt,
             system_prompt=prompts.file_improvement_prompt,
-            temperature=0.3,
+            temperature=0,
             debug_label="IMPROVED FILE CONTENT",
         )
+
+        return self._clean_file_output(improved)

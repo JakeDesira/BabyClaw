@@ -7,17 +7,54 @@ import prompts
 import agents.executor.tools as tools
 
 
+WRITE_ACTIONS = {
+    "create_file",
+    "write_file",
+    "append_file",
+    "delete_file",
+    "edit_file",
+    "create_directory",
+    "move_path",
+    "move_directory_contents",
+    "copy_path",
+    "rename_path",
+}
+
+
+INSPECTION_ACTIONS = {
+    "list_directory",
+    "view_file",
+    "read_file",
+    "find_file",
+}
+
+
+SKIP_DIRECTORY_SUMMARY_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".idea",
+    ".vscode",
+}
+
+
 class PlannerAgent:
-    def __init__(self, memory=None, planning_model: str | None = None, filesystem_guard=None, debug: bool = True):
+    def __init__(self, memory=None, planning_model: str | None = None, filesystem_guard=None, reasoning_settings=None, debug: bool = True):
         self.memory = memory
         self.debug = debug
         self.filesystem_guard = filesystem_guard
+        self.reasoning_settings = reasoning_settings
         self.planning_client = OllamaClient(model=planning_model, supports_think=True)
 
     def _debug(self, label: str, value) -> None:
         if self.debug:
             print(f"[PLANNER DEBUG] {label}: {value}")
 
+    # ===== Context Helpers =====
     def _get_context(self) -> str:
         if self.memory is None:
             return ""
@@ -27,53 +64,13 @@ class PlannerAgent:
         except AttributeError:
             return ""
         
-    def _extract_json(self, text: str) -> str:
-        cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError("No JSON object found in planner response.")
-
-        return cleaned[start:end + 1]
-    
-    def _resolve_relative_path(self, path_value: str, must_exist: bool = False) -> str:
-        path_value = path_value.strip().strip("'\"")
-
-        if not path_value:
-            return path_value
-
-        path_value = path_value.replace("\\", "/")
-        path = Path(path_value).expanduser()
-
-        if path.is_absolute():
-            return str(path)
-
-        approved_dirs = self._get_approved_directories()
-
-        if not approved_dirs:
-            return path_value
-
-        base_dir = Path(approved_dirs[-1])
-        parts = path.parts
-
-        if parts and parts[0].lower() == base_dir.name.lower():
-            path = Path(*parts[1:])
-
-        candidate = base_dir / path
-
-        if must_exist:
-            if candidate.exists():
-                return str(candidate)
-
-            matches = list(base_dir.rglob(path.name))
-
-            if len(matches) >= 1:
-                return str(matches[0])
-
-        return str(candidate)
+    def _get_approved_directories(self) -> list[str]:
+        if self.filesystem_guard is None:
+            return []
         
+        return self.filesystem_guard.list_approved()
+    
+
     def _summarise_directory_tree(self, root: Path, max_depth: int = 3, max_entries: int = 100) -> str:
         lines = []
         count = 0
@@ -102,19 +99,14 @@ class PlannerAgent:
                 lines.append(f"{kind} {relative}")
                 count += 1
 
-                if entry.is_dir():
+                if entry.is_dir() and entry.name not in SKIP_DIRECTORY_SUMMARY_DIRS:
                     walk(entry, depth + 1)
 
         walk(root, 1)
 
         return "\n".join(lines) if lines else "(empty)"
     
-    def _get_approved_directories(self) -> list[str]:
-        if self.filesystem_guard is None:
-            return []
-        
-        return self.filesystem_guard.list_approved()
-    
+
     def _build_directory_context(self, approved_dirs: list[str]) -> str:
         if not approved_dirs:
             return ""
@@ -134,6 +126,7 @@ class PlannerAgent:
                 self._debug("DIRECTORY SUMMARY ERROR", f"{approved_dir}: {e}")
 
         return "\n\n".join(directory_summaries)
+    
     
     def _build_file_state_context(self) -> str:
         if self.memory is None:
@@ -169,81 +162,40 @@ class PlannerAgent:
         if not approved_dirs:
             return "No directories have been granted access yet."
 
-        return (
-            "Approved directories (use these paths when creating or editing files):\n"
-            + "\n".join(f"- {directory}" for directory in approved_dirs)
-        )
+        active_directory = ""
+
+        if self.filesystem_guard is not None:
+            try:
+                active_directory = self.filesystem_guard.get_active_directory()
+            except AttributeError:
+                active_directory = ""
+
+        lines = ["Approved directories:"]
+
+        for directory in approved_dirs:
+            marker = " (ACTIVE)" if directory == active_directory else ""
+            lines.append(f"- {directory}{marker}")
+
+        lines.append("")
+        lines.append("Important path rule:")
+        lines.append("- Relative paths must be resolved inside the ACTIVE directory unless the user explicitly names another approved directory.")
+
+        return "\n".join(lines)
+
     
-    
-    def _looks_like_filesystem_path(self, value: str) -> bool:
-        value = value.strip()
+    # ===== Parsing / Validation Helpers =====
+    def _extract_json(self, text: str) -> str:
+        cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
-        if not value:
-            return False
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
 
-        possible_path = value.split("::", 1)[0].strip()
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("No JSON object found in planner response.")
 
-        return (
-            "/" in possible_path
-            or "\\" in possible_path
-            or possible_path.startswith("~")
-            or possible_path.startswith("/Users/")
-            or Path(possible_path).suffix != ""
-        )
+        return cleaned[start:end + 1]
     
 
-    def _looks_like_placeholder(self, value: str) -> bool:
-        cleaned = value.strip().lower()
-
-        if not cleaned:
-            return False
-
-        placeholder_markers = [
-            "content of",
-            "converted to",
-            "same content",
-            "same contents",
-            "placeholder",
-            "to be generated",
-        ]
-
-        return (
-            cleaned.startswith("[")
-            and cleaned.endswith("]")
-            and any(marker in cleaned for marker in placeholder_markers)
-        )
-    
-    
-    def create_plan(self, prompt: str) -> dict:
-        approved_dirs = self._get_approved_directories()
-
-        planner_user_prompt = (
-            f"Recent context:\n{self._get_context()}\n\n"
-            f"{self._build_files_context()}\n\n"
-            f"{self._build_dirs_context(approved_dirs)}\n\n"
-            f"{self._build_directory_context(approved_dirs)}\n\n"
-            f"File state:\n{self._build_file_state_context()}\n\n"
-            f"User request:\n{prompt}"
-        )
-
-        plan_response = self.planning_client.ask(
-            prompt=planner_user_prompt,
-            system_prompt=prompts.planner_system_prompt,
-            temperature=0,
-            think="low",
-        )
-
-        if not plan_response.ok:
-            self._debug("PLANNER LLM ERROR", plan_response.error)
-            return self._fallback_plan(plan_response.error)
-
-        self._debug("RAW PLAN", plan_response.content)
-
-        parsed_plan = self._parse_plan(plan_response.content)
-        normalized_plan = self._normalize_plan(parsed_plan, prompt)
-        self._debug("PARSED PLAN", normalized_plan)
-        return normalized_plan
-    
     def _fallback_plan(self, error_message: str) -> dict:
         return {
             "plan_text": error_message,
@@ -280,6 +232,7 @@ class PlannerAgent:
             "list_directory",
             "view_file",
             "find_file",
+            "run_python_file",
             "create_file",
             "write_file",
             "append_file",
@@ -287,6 +240,7 @@ class PlannerAgent:
             "edit_file",
             "create_directory",
             "move_path",
+            "move_directory_contents",
             "copy_path",
             "rename_path",
         }
@@ -359,6 +313,179 @@ class PlannerAgent:
         return validated
     
 
+    def _validate_next_step(self, step: dict) -> dict:
+        valid_actions = {
+            "NONE",
+            "list_directory",
+            "view_file",
+            "find_file",
+            "run_python_file",
+            "create_file",
+            "write_file",
+            "append_file",
+            "delete_file",
+            "edit_file",
+            "create_directory",
+            "move_path",
+            "move_directory_contents",
+            "copy_path",
+            "rename_path",
+        }
+
+        status = str(step.get("status", "FINISH")).upper()
+        action = str(step.get("action", "NONE")).strip()
+        action_input = str(step.get("input", "")).strip()
+
+        if status not in {"CONTINUE", "FINISH"}:
+            status = "FINISH"
+
+        if action not in valid_actions:
+            action = "NONE"
+
+        if status == "FINISH":
+            action = "NONE"
+            action_input = ""
+
+        return {
+            "thought_summary": str(step.get("thought_summary", "")),
+            "status": status,
+            "action": action,
+            "input": action_input,
+            "final_response": str(step.get("final_response", "")),
+        }
+    
+
+    # ===== Path / Normalisation Helpers ======
+    def _find_first_matching_path(self, root: Path, file_name: str) -> Path | None:
+        try:
+            for candidate in root.rglob(file_name):
+                if any(part in SKIP_DIRECTORY_SUMMARY_DIRS for part in candidate.parts):
+                    continue
+
+                if candidate.exists():
+                    return candidate
+
+        except Exception:
+            return None
+
+        return None
+
+
+    def _resolve_relative_path(self, path_value: str, must_exist: bool = False) -> str:
+        path_value = path_value.strip().strip("'\"")
+
+        if not path_value:
+            return path_value
+
+        path_value = path_value.replace("\\", "/")
+        path = Path(path_value).expanduser()
+
+        if path.is_absolute():
+            return str(path)
+
+        approved_dirs = self._get_approved_directories()
+
+        if not approved_dirs:
+            return path_value
+
+        parts = path.parts
+
+        # If the first part of the path matches an approved directory name,
+        # use that approved directory as the base.
+        #
+        # Example:
+        # approved directory: /Users/jake/.../test3
+        # input: test3/testing.txt
+        # result: /Users/jake/.../test3/testing.txt
+        if parts:
+            first_part = parts[0].lower()
+
+            for approved_dir in approved_dirs:
+                approved_path = Path(approved_dir)
+                approved_name = approved_path.name.lower()
+
+                if first_part == approved_name:
+                    remaining_path = Path(*parts[1:]) if len(parts) > 1 else Path()
+                    candidate = approved_path / remaining_path
+
+                    if must_exist:
+                        if candidate.exists():
+                            return str(candidate)
+
+                        match = self._find_first_matching_path(approved_path, path.name)
+
+                        if match is not None:
+                            return str(match)
+
+                    self._debug("ACTIVE DIRECTORY USED FOR RELATIVE PATH", approved_path)
+                    self._debug("RELATIVE PATH CANDIDATE", candidate)
+                    return str(candidate)
+
+        # Otherwise, fall back to the latest approved directory as the active directory.
+        base_dir = Path(approved_dirs[-1])
+        candidate = base_dir / path
+
+        if must_exist:
+            if candidate.exists():
+                return str(candidate)
+
+            match = self._find_first_matching_path(base_dir, path.name)
+
+            if match is not None:
+                return str(match)
+
+        return str(candidate)
+    
+
+    def _input_file_exists(self, file_name: str) -> bool:
+        try:
+            return tools.find_file_in_input(file_name) is not None
+        except Exception:
+            return False
+    
+    
+    def _looks_like_filesystem_path(self, value: str) -> bool:
+        value = value.strip()
+
+        if not value:
+            return False
+
+        possible_path = value.split("::", 1)[0].strip().strip("'\"")
+
+        if not possible_path:
+            return False
+
+        return (
+            "/" in possible_path
+            or "\\" in possible_path
+            or possible_path.startswith("~")
+            or possible_path.startswith("/")
+            or Path(possible_path).suffix != ""
+        )
+    
+
+    def _looks_like_placeholder(self, value: str) -> bool:
+        cleaned = value.strip().lower()
+
+        if not cleaned:
+            return False
+
+        placeholder_markers = [
+            "content of",
+            "converted to",
+            "same content",
+            "same contents",
+            "placeholder",
+            "to be generated",
+        ]
+
+        return (
+            cleaned.startswith("[")
+            and cleaned.endswith("]")
+            and any(marker in cleaned for marker in placeholder_markers)
+        )
+    
+
     def _normalize_plan(self, plan: dict, prompt: str) -> dict:
         lower_prompt = prompt.lower()
         executor_actions = plan.get("executor_actions", [])
@@ -388,6 +515,11 @@ class PlannerAgent:
         for item in executor_actions:
             action = item.get("action", "")
             action_input = item.get("input", "")
+
+            if action in {"read_file", "view_file"} and self._input_file_exists(action_input):
+                item["action"] = "read_file"
+                item["input"] = action_input
+                continue
 
             if self._looks_like_filesystem_path(action_input):
                 cleaned_path = action_input.replace("\\", "/").strip().strip("'\"")
@@ -476,19 +608,7 @@ class PlannerAgent:
             plan["target_source"] = "EXECUTOR"
             plan["needs_executor"] = True
 
-        write_actions = {
-            "create_directory",
-            "create_file",
-            "edit_file",
-            "write_file",
-            "delete_file",
-            "append_file",
-            "move_path",
-            "copy_path",
-            "rename_path",
-        }
-
-        if any(item["action"] in write_actions for item in executor_actions):
+        if any(item["action"] in WRITE_ACTIONS for item in executor_actions):
             plan["response_mode"] = "RAW"
             plan["needs_review"] = False
 
@@ -508,6 +628,43 @@ class PlannerAgent:
 
         traceback_markers = ['file "', "line ", "traceback", "typeerror", "valueerror", "syntaxerror"]
 
+        project_fix_words = [
+            "fix",
+            "repair",
+            "complete",
+            "continue",
+            "make it run",
+            "make it work",
+            "incomplete",
+            "missing",
+        ]
+
+        project_words = [
+            "project",
+            "codebase",
+            "source code",
+            ".py",
+        ]
+
+        only_reading = executor_actions and all(
+            item.get("action") in INSPECTION_ACTIONS
+            for item in executor_actions
+        )
+
+        if (
+            any(word in lower_prompt for word in project_fix_words)
+            and any(word in lower_prompt for word in project_words)
+            and only_reading
+        ):
+            plan["plan_text"] = (
+                "The planner produced only inspection actions for a project-fix request. "
+                "This is incomplete; iterative mode should continue with edit/create/run actions."
+            )
+            plan["needs_review"] = False
+            plan["response_mode"] = "RAW"
+            plan["target_source"] = "EXECUTOR"
+            plan["transformation"] = "NONE"
+
         if any(marker in lower_prompt for marker in traceback_markers):
             if plan["memory_action"] == "NONE" and not plan.get("executor_actions"):
                 plan["needs_memory"] = True
@@ -524,6 +681,13 @@ class PlannerAgent:
                 source, destination = action_input.split(":", 1)
                 item["input"] = f"{source.strip()}::{destination.strip()}"
 
+        for item in plan.get("executor_actions", []):
+            action = item.get("action", "")
+            action_input = item.get("input", "")
+
+            if action == "run_python_file" and not action_input.strip():
+                item["input"] = "main.py"
+
         last_active_content_actions = {
             "get_last_active_file_content",
             "get_previous_active_file_content",
@@ -536,4 +700,213 @@ class PlannerAgent:
                 plan["transformation"] = "NONE"
                 plan["needs_review"] = False
 
+        for item in plan.get("executor_actions", []):
+            action = item.get("action", "")
+            action_input = item.get("input", "")
+
+            if action != "move_path" or "::" not in action_input:
+                continue
+
+            source_text, destination_text = action_input.split("::", 1)
+
+            source_name = Path(source_text.strip().strip("'\"")).name
+            destination_parts = Path(destination_text.strip().strip("'\"")).parts
+
+            if source_name and source_name in destination_parts:
+                item["action"] = "move_directory_contents"
+                item["input"] = action_input
+
         return plan
+    
+
+    def create_next_step_after_repetition(self, original_prompt: str, observations: list[dict], repeated_action: str, repeated_input: str) -> dict:
+        approved_dirs = self._get_approved_directories()
+
+        observation_text_parts = []
+
+        for index, observation in enumerate(observations, start=1):
+            observation_text_parts.append(
+                f"Step {index}\n"
+                f"Action: {observation.get('action', '')}\n"
+                f"Input: {observation.get('input', '')}\n"
+                f"Result:\n{observation.get('result', '')}"
+            )
+
+        observation_text = "\n\n".join(observation_text_parts)
+
+        used_action_text = "\n".join(
+            f"- {observation.get('action', '')}::{observation.get('input', '')}"
+            for observation in observations
+        )
+
+        planner_user_prompt = (
+            f"User goal:\n{original_prompt}\n\n"
+            f"{self._build_dirs_context(approved_dirs)}\n\n"
+            f"Current approved directory context:\n"
+            f"{self._build_directory_context(approved_dirs)}\n\n"
+            f"Actions already used:\n"
+            f"{used_action_text if used_action_text else 'None'}\n\n"
+            f"The previous proposed action was rejected because it repeated this exact action:\n"
+            f"{repeated_action}::{repeated_input}\n\n"
+            f"You must now choose a DIFFERENT action/input pair.\n"
+            f"Do not inspect the same folder or file again.\n"
+            f"If a folder was already listed and is empty, create the next missing file needed for the user's goal.\n"
+            f"If a file was already created, do not view it immediately. Continue creating the next missing file, run the project, or finish.\n"
+            f"If you cannot decide safely, FINISH with a clear explanation.\n\n"
+            f"Observations so far:\n"
+            f"{observation_text if observation_text else 'No observations yet.'}\n\n"
+            f"Choose the next step."
+        )
+
+        response = self.planning_client.ask(
+            prompt=planner_user_prompt,
+            system_prompt=prompts.iterative_planner_prompt,
+            temperature=0,
+            think=self.reasoning_settings.planner_think if self.reasoning_settings else "low",
+        )
+
+        if not response.ok:
+            return {
+                "thought_summary": response.error,
+                "status": "FINISH",
+                "action": "NONE",
+                "input": "",
+                "final_response": f"Planner error after repetition: {response.error}",
+            }
+
+        try:
+            json_text = self._extract_json(response.content)
+            step = json.loads(json_text)
+        except Exception as e:
+            return {
+                "thought_summary": f"Planner returned invalid JSON after repetition: {e}",
+                "status": "FINISH",
+                "action": "NONE",
+                "input": "",
+                "final_response": f"Planner returned invalid JSON after repetition: {e}",
+            }
+
+        return self._validate_next_step(step)
+
+
+    # ===== Public Planner Methods =====
+    def create_plan(self, prompt: str, retrieved_memory_context: str = "") -> dict:
+        approved_dirs = self._get_approved_directories()
+
+        planner_user_prompt = (
+            f"Recent context:\n{self._get_context()}\n\n"
+            f"Retrieved long-term memory:\n"
+            f"{retrieved_memory_context if retrieved_memory_context else 'None'}\n\n"
+            f"{self._build_files_context()}\n\n"
+            f"{self._build_dirs_context(approved_dirs)}\n\n"
+            f"{self._build_directory_context(approved_dirs)}\n\n"
+            f"File state:\n{self._build_file_state_context()}\n\n"
+            f"User request:\n{prompt}"
+        )
+
+        plan_response = self.planning_client.ask(
+            prompt=planner_user_prompt,
+            system_prompt=prompts.planner_system_prompt,
+            temperature=0,
+            think=self.reasoning_settings.planner_think if self.reasoning_settings else "low",
+        )
+
+        if not plan_response.ok:
+            self._debug("PLANNER LLM ERROR", plan_response.error)
+            return self._fallback_plan(plan_response.error)
+
+        self._debug("RAW PLAN", plan_response.content)
+
+        parsed_plan = self._parse_plan(plan_response.content)
+        normalized_plan = self._normalize_plan(parsed_plan, prompt)
+        self._debug("PARSED PLAN", normalized_plan)
+        return normalized_plan
+    
+    
+    def create_next_step(self, original_prompt: str, observations: list[dict],  max_observation_chars: int = 12000) -> dict:
+        approved_dirs = self._get_approved_directories()
+
+        observation_text_parts = []
+
+        for index, observation in enumerate(observations, start=1):
+            observation_text_parts.append(
+                f"Step {index}\n"
+                f"Action: {observation.get('action', '')}\n"
+                f"Input: {observation.get('input', '')}\n"
+                f"Result:\n{observation.get('result', '')}"
+            )
+
+        observation_text = "\n\n".join(observation_text_parts)
+
+        used_action_text = "\n".join(
+            f"- {observation.get('action', '')}::{observation.get('input', '')}"
+            for observation in observations
+        )
+
+        if len(observation_text) > max_observation_chars:
+            observation_text = observation_text[-max_observation_chars:]
+
+        planner_user_prompt = (
+            f"User goal:\n{original_prompt}\n\n"
+            f"{self._build_dirs_context(approved_dirs)}\n\n"
+            f"Current approved directory context:\n"
+            f"{self._build_directory_context(approved_dirs)}\n\n"
+            f"Actions already used:\n"
+            f"{used_action_text if used_action_text else 'None'}\n\n"
+            f"Important:\n"
+            f"- Actions already used is a strict ban list.\n"
+            f"- You MUST NOT repeat any exact action/input pair listed above.\n"
+            f"- You MUST NOT view the same file again unless an edit_file or write_file action changed that exact file after the previous view.\n"
+            f"- Use file contents already shown in Observations so far instead of viewing the same file again.\n"
+            f"- If a relevant file was already viewed, your next action must be edit_file, create_file, run_python_file, or FINISH.\n"
+            f"- If you are unsure what to edit, use FINISH with a clear diagnosis instead of repeating inspection.\n\n"
+            f"Observations so far:\n"
+            f"{observation_text if observation_text else 'No observations yet.'}\n\n"
+            f"Choose the next step."
+        )
+
+        response = self.planning_client.ask(
+            prompt=planner_user_prompt,
+            system_prompt=prompts.iterative_planner_prompt,
+            temperature=0,
+            think=self.reasoning_settings.planner_think if self.reasoning_settings else "low",
+        )
+
+        if not response.ok:
+            return {
+                "thought_summary": response.error,
+                "status": "FINISH",
+                "action": "NONE",
+                "input": "",
+                "final_response": f"Planner error: {response.error}",
+            }
+
+        try:
+            json_text = self._extract_json(response.content)
+            step = json.loads(json_text)
+        except Exception as e:
+            self._debug("RAW INVALID ITERATIVE PLAN", response.content)
+
+            if not observations:
+                return {
+                    "thought_summary": "Fallback: inspect the active approved directory first.",
+                    "status": "CONTINUE",
+                    "action": "list_directory",
+                    "input": "",
+                    "final_response": "",
+                }
+
+            return {
+                "thought_summary": f"Planner returned invalid JSON: {e}",
+                "status": "FINISH",
+                "action": "NONE",
+                "input": "",
+                "final_response": (
+                    f"Planner returned invalid JSON after some observations: {e}\n\n"
+                    f"Raw planner output:\n{response.content}"
+                ),
+            }
+
+        return self._validate_next_step(step)
+    
+    

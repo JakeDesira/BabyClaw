@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -61,12 +62,18 @@ class ExecutionVerifier:
 
         if action == "move_path":
             return self._verify_move_path(resolved_input)
+        
+        if action == "move_directory_contents":
+            return self._verify_move_directory_contents(resolved_input)
 
         if action == "copy_path":
             return self._verify_copy_path(resolved_input)
 
         if action == "rename_path":
             return self._verify_rename_path(resolved_input)
+        
+        if action == "run_python_file":
+            return self._verify_run_python_file(step_result)
 
         if action == "edit_file":
             # edit_file itself only prepares the edit.
@@ -119,6 +126,11 @@ class ExecutionVerifier:
                 "ok": False,
                 "feedback": f"Created file content does not match expected content: {safe}",
             }
+        
+        quality_error = self._verify_python_content_quality(safe, actual_content)
+
+        if quality_error is not None:
+            return quality_error
 
         return {
             "ok": True,
@@ -163,6 +175,11 @@ class ExecutionVerifier:
                 "ok": False,
                 "feedback": f"Written file content does not match expected content: {safe}",
             }
+            
+        quality_error = self._verify_python_content_quality(safe, actual_content)
+
+        if quality_error is not None:
+            return quality_error
 
         return {
             "ok": True,
@@ -381,4 +398,174 @@ class ExecutionVerifier:
         return {
             "ok": True,
             "feedback": f"Verified rename: {source} -> {destination}",
+        }
+    
+
+    def _verify_run_python_file(self, step_result: str) -> dict:
+        if step_result.startswith("Error") or step_result.startswith("Access denied"):
+            return {
+                "ok": False,
+                "feedback": step_result,
+            }
+
+        match = re.search(r"Return code:\s*(-?\d+)", step_result)
+
+        if match is None:
+            return {
+                "ok": False,
+                "feedback": "Python run verification failed: no return code found.",
+            }
+
+        return_code = int(match.group(1))
+
+        if return_code != 0:
+            return {
+                "ok": False,
+                "feedback": (
+                    "Python run failed with non-zero return code.\n\n"
+                    f"{step_result}"
+                ),
+            }
+
+        return {
+            "ok": True,
+            "feedback": "Python run completed successfully.",
+        }
+    
+    
+    def _verify_python_content_quality(self, safe: Path, content: str) -> dict | None:
+        if safe.suffix.lower() != ".py":
+            return None
+
+        stripped_content = content.strip()
+
+        if not stripped_content:
+            return {
+                "ok": False,
+                "feedback": f"Python quality verification failed for {safe}: file is empty.",
+            }
+
+        if "```" in stripped_content:
+            return {
+                "ok": False,
+                "feedback": (
+                    f"Python quality verification failed for {safe}: "
+                    "markdown code fence found in Python file."
+                ),
+            }
+
+        first_line = stripped_content.splitlines()[0].strip().lower()
+
+        bad_starts = [
+            "here is",
+            "sure",
+            "this is",
+            "the updated",
+            "updated file",
+        ]
+
+        if any(first_line.startswith(bad_start) for bad_start in bad_starts):
+            return {
+                "ok": False,
+                "feedback": (
+                    f"Python quality verification failed for {safe}: "
+                    "file appears to contain assistant explanation instead of raw code."
+                ),
+            }
+
+        try:
+            compile(content, str(safe), "exec")
+        except SyntaxError as e:
+            return {
+                "ok": False,
+                "feedback": f"Python syntax verification failed for {safe}: {e}",
+            }
+
+        future_import_pattern = r"(?m)^from __future__ import annotations$"
+        future_count = len(re.findall(future_import_pattern, content))
+
+        if future_count > 1:
+            return {
+                "ok": False,
+                "feedback": (
+                    f"Python quality verification failed for {safe}: "
+                    f"found {future_count} duplicate future imports."
+                ),
+            }
+
+        if future_count == 1:
+            future_match = re.search(future_import_pattern, content)
+
+            if future_match is not None:
+                before_future = content[:future_match.start()].strip()
+
+                allowed_before_future = (
+                    before_future == ""
+                    or (
+                        before_future.startswith('"""')
+                        and before_future.endswith('"""')
+                    )
+                    or (
+                        before_future.startswith("'''")
+                        and before_future.endswith("'''")
+                    )
+                )
+
+                if not allowed_before_future:
+                    return {
+                        "ok": False,
+                        "feedback": (
+                            f"Python quality verification failed for {safe}: "
+                            "future import must appear at the top of the file, after an optional module docstring only."
+                        ),
+                    }
+
+        class_count = len(re.findall(r"(?m)^class\s+\w+", content))
+
+        if class_count > 4 and safe.name in {"Board.py", "Piece.py", "GameEngine.py", "MoveController.py", "View.py"}:
+            return {
+                "ok": False,
+                "feedback": (
+                    f"Python quality verification failed for {safe}: "
+                    "file appears to contain too many class definitions, possibly merged from other files."
+                ),
+            }
+
+        return None
+    
+    def _verify_move_directory_contents(self, resolved_input: str) -> dict:
+        parts = self._split_pair(resolved_input)
+
+        if parts is None:
+            return {
+                "ok": False,
+                "feedback": "Verification failed: expected source_directory::destination_directory format.",
+            }
+
+        source_text, destination_text = parts
+
+        source = self._resolve_safe_path(source_text)
+        destination = self._resolve_safe_path(destination_text)
+
+        if source is None or destination is None:
+            return {
+                "ok": False,
+                "feedback": "Move contents source or destination is not approved.",
+            }
+
+        if not source.exists() or not source.is_dir():
+            return {
+                "ok": False,
+                "feedback": f"Move contents source directory does not exist: {source}",
+            }
+
+        if not destination.exists() or not destination.is_dir():
+            return {
+                "ok": False,
+                "feedback": f"Move contents destination directory does not exist: {destination}",
+            }
+
+        return {
+            "ok": True,
+            "feedback": f"Verified directory contents move: {source} -> {destination}",
         }

@@ -133,3 +133,82 @@ def copy_path(action_input: str, filesystem_guard) -> str:
         return f"Copied: {source} -> {destination}"
     except Exception as e:
         return f"Error copying path: {e}"
+    
+from pathlib import Path
+import shutil
+
+
+def move_directory_contents(action_input: str, filesystem_guard) -> str:
+    parts = action_input.split("::", 1)
+
+    if len(parts) != 2:
+        return "Error: move_directory_contents requires 'source_directory::destination_directory' format."
+
+    source_raw, destination_raw = parts
+    source_raw = source_raw.strip()
+    destination_raw = destination_raw.strip()
+
+    source = filesystem_guard.safe_path(source_raw)
+    destination = filesystem_guard.safe_path(destination_raw)
+
+    if source is None:
+        return f"Access denied. '{source_raw}' is not within an approved directory."
+
+    if destination is None:
+        return f"Access denied. '{destination_raw}' is not within an approved directory."
+
+    if not source.exists() or not source.is_dir():
+        return f"'{source}' is not a directory."
+
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+
+        source = source.resolve()
+        destination = destination.resolve()
+
+        moved_items = []
+        skipped_items = []
+
+        for item in source.iterdir():
+            item = item.resolve()
+
+            # Never move the destination folder into itself.
+            if item == destination:
+                skipped_items.append(item.name)
+                continue
+
+            # If destination is inside source, skip anything already inside destination.
+            try:
+                item.relative_to(destination)
+                skipped_items.append(item.name)
+                continue
+            except ValueError:
+                pass
+
+            target = destination / item.name
+
+            if target.exists():
+                skipped_items.append(f"{item.name} already exists in destination")
+                continue
+
+            shutil.move(str(item), str(target))
+            moved_items.append(item.name)
+
+        if not moved_items:
+            return (
+                f"No items were moved from '{source}' to '{destination}'.\n"
+                f"Skipped: {', '.join(skipped_items) if skipped_items else 'none'}"
+            )
+
+        result = (
+            f"Moved {len(moved_items)} item(s) from '{source}' to '{destination}':\n"
+            + "\n".join(f"- {name}" for name in moved_items)
+        )
+
+        if skipped_items:
+            result += "\n\nSkipped:\n" + "\n".join(f"- {name}" for name in skipped_items)
+
+        return result
+
+    except Exception as e:
+        return f"Error moving directory contents: {e}"

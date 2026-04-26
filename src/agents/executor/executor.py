@@ -26,7 +26,10 @@ class ExecutorAgent:
         if self.memory is None:
             return
 
-        if file_content.startswith("Error:") or file_content.startswith("Warning:"):
+        if not file_name.strip():
+            return
+
+        if file_content.startswith("Error:") or file_content.startswith("Warning:") or file_content.startswith("Access denied"):
             return
 
         self.memory.set_last_active_file(file_name, file_content)
@@ -51,8 +54,13 @@ class ExecutorAgent:
             "summarise it",
             "summarize it",
             "explain it",
+            "explain the file",
+            "summarise the file",
+            "summarize the file",
             "what does it say",
             "what does the file say",
+            "what is in it",
+            "what is inside it",
         }
 
         if lower_prompt in current_file_phrases and last_file_name and last_file_content:
@@ -127,8 +135,31 @@ class ExecutorAgent:
             return "Error: read_multiple_files requires at least one filename."
 
         return tools.read_multiple_files(filenames)
+    
+
+    def _remember_viewed_workspace_file(self, action_input: str, result: str) -> None:
+        if self.memory is None:
+            return
+
+        if result.startswith("Error:") or result.startswith("Access denied") or result.startswith("Warning:"):
+            return
+
+        file_name = action_input.strip()
+
+        if "::" in file_name:
+            file_name = file_name.split("::", 1)[0].strip()
+
+        if not file_name:
+            return
+
+        self.memory.set_last_active_file(file_name, result)
+
 
     def handle(self, action: str, action_input: str = "", original_prompt: str = "") -> str:
+        action = action.strip()
+        action_input = action_input or ""
+        original_prompt = original_prompt or ""
+
         if action == "get_current_time":
             return f"The current time is {tools.get_current_time()}."
 
@@ -141,40 +172,31 @@ class ExecutorAgent:
         if action == "read_multiple_files":
             return self._handle_read_multiple_files(action_input)
 
+        workspace_actions = {
+            "view_file": tools.view_guarded_file,
+            "create_file": tools.create_guarded_file,
+            "write_file": tools.write_guarded_file,
+            "append_file": tools.append_guarded_file,
+            "delete_file": tools.delete_guarded_file,
+            "edit_file": tools.prepare_guarded_edit_file,
+            "find_file": tools.find_guarded_file,
+            "list_directory": tools.list_directory,
+            "create_directory": tools.create_directory,
+            "move_path": tools.move_path,
+            "move_directory_contents": tools.move_directory_contents,
+            "copy_path": tools.copy_path,
+            "rename_path": tools.rename_path,
+            "run_python_file": tools.run_python_file,
+        }
+
+        tool_function = workspace_actions.get(action)
+
+        if tool_function is None:
+            return f"Executor could not find a supported action for '{action}'."
+
+        result = tool_function(action_input, self.filesystem_guard)
+
         if action == "view_file":
-            return tools.view_guarded_file(action_input, self.filesystem_guard)
+            self._remember_viewed_workspace_file(action_input, result)
 
-        if action == "create_file":
-            return tools.create_guarded_file(action_input, self.filesystem_guard)
-
-        if action == "write_file":
-            return tools.write_guarded_file(action_input, self.filesystem_guard)
-
-        if action == "append_file":
-            return tools.append_guarded_file(action_input, self.filesystem_guard)
-
-        if action == "delete_file":
-            return tools.delete_guarded_file(action_input, self.filesystem_guard)
-
-        if action == "edit_file":
-            return tools.prepare_guarded_edit_file(action_input, self.filesystem_guard)
-        
-        if action == "find_file":
-            return tools.find_guarded_file(action_input, self.filesystem_guard)
-
-        if action == "list_directory":
-            return tools.list_directory(action_input, self.filesystem_guard)
-
-        if action == "create_directory":
-            return tools.create_directory(action_input, self.filesystem_guard)
-
-        if action == "move_path":
-            return tools.move_path(action_input, self.filesystem_guard)
-
-        if action == "copy_path":
-            return tools.copy_path(action_input, self.filesystem_guard)
-
-        if action == "rename_path":
-            return tools.rename_path(action_input, self.filesystem_guard)
-
-        return f"Executor could not find a supported action for '{action}'."
+        return result

@@ -23,7 +23,7 @@ class SQLiteMemoryStore:
 
     def _ensure_database(self) -> None:
         """
-        Create the memories table if it does not already exist.
+        Create the memories/settings tables if they do not already exist.
         """
         with self._connect() as connection:
             connection.execute(
@@ -36,6 +36,16 @@ class SQLiteMemoryStore:
                     importance INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
                     last_accessed_at TEXT
+                )
+                """
+            )
+
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -273,6 +283,89 @@ class SQLiteMemoryStore:
 
             connection.commit()
             return cursor.rowcount
+        
+
+    def upsert_setting(self, key: str, value: str) -> str:
+        """
+        Create or update a persistent setting.
+        """
+        cleaned_key = key.strip()
+        cleaned_value = value.strip()
+
+        if not cleaned_key:
+            return "Error: Setting key cannot be empty."
+
+        if not cleaned_value:
+            return "Error: Setting value cannot be empty."
+
+        now = datetime.now().isoformat(timespec="seconds")
+
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (cleaned_key, cleaned_value, now),
+            )
+
+            connection.commit()
+
+        return f"Saved setting '{cleaned_key}': {cleaned_value}"
+
+
+    def get_setting(self, key: str) -> str:
+        """
+        Retrieve a persistent setting value.
+        """
+        cleaned_key = key.strip()
+
+        if not cleaned_key:
+            return ""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT value
+                FROM settings
+                WHERE key = ?
+                """,
+                (cleaned_key,),
+            ).fetchone()
+
+            if row is None:
+                return ""
+
+            return str(row["value"])
+
+
+    def delete_setting(self, key: str) -> str:
+        """
+        Delete a persistent setting.
+        """
+        cleaned_key = key.strip()
+
+        if not cleaned_key:
+            return "Error: Setting key cannot be empty."
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM settings
+                WHERE key = ?
+                """,
+                (cleaned_key,),
+            )
+
+            connection.commit()
+
+        if cursor.rowcount > 0:
+            return f"Deleted setting: {cleaned_key}"
+
+        return f"No setting found for: {cleaned_key}"
 
 
     def format_memories(self, memories: list[dict]) -> str:
@@ -292,3 +385,41 @@ class SQLiteMemoryStore:
             )
 
         return "\n".join(lines)
+    
+
+    def get_memories_by_types(self, memory_types: list[str], limit: int = 20) -> list[dict]:
+        """
+        Return recent/important memories for the given memory types.
+        Useful when the request asks for personalised output, e.g. 'use my info'.
+        """
+        cleaned_types = [
+            memory_type.strip()
+            for memory_type in memory_types
+            if memory_type.strip()
+        ]
+
+        if not cleaned_types:
+            return []
+
+        placeholders = ",".join("?" for _ in cleaned_types)
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    id,
+                    memory_type,
+                    content,
+                    source,
+                    importance,
+                    created_at,
+                    last_accessed_at
+                FROM memories
+                WHERE memory_type IN ({placeholders})
+                ORDER BY importance DESC, created_at DESC
+                LIMIT ?
+                """,
+                [*cleaned_types, limit],
+            ).fetchall()
+
+            return [dict(row) for row in rows]

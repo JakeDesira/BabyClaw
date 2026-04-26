@@ -1,8 +1,47 @@
+import json
+import re
+
 from ollama_client import OllamaClient
 import prompts
 
+WRITE_ACTIONS = {
+    "create_file",
+    "write_file",
+    "append_file",
+    "delete_file",
+    "edit_file",
+    "create_directory",
+    "move_path",
+    "move_directory_contents",
+    "copy_path",
+    "rename_path",
+}
+
+
+INSPECTION_ACTIONS = {
+    "list_directory",
+    "view_file",
+    "find_file",
+}
+
+
+PROGRESS_ACTIONS = {
+    "create_file",
+    "write_file",
+    "append_file",
+    "delete_file",
+    "edit_file",
+    "create_directory",
+    "move_path",
+    "move_directory_contents",
+    "copy_path",
+    "rename_path",
+    "run_python_file",
+}
+
+
 class CoordinatorAgent:
-    def __init__(self, planner=None, plan_executor=None, response_generator=None, reviewer=None, memory=None, memory_router=None, memory_writer=None, model: str | None = None, debug: bool = True):
+    def __init__(self, planner=None, plan_executor=None, response_generator=None, reviewer=None, memory=None, memory_router=None, memory_writer=None, model: str | None = None, reasoning_settings=None, debug: bool = True):
         """
         Entry point of the Baby Claw architecture.
 
@@ -19,7 +58,9 @@ class CoordinatorAgent:
         self.memory = memory
         self.memory_router = memory_router
         self.memory_writer = memory_writer
+        self.reasoning_settings = reasoning_settings
         self.debug = debug
+        self.last_trace = {}
 
 
     def _debug(self, label: str, value) -> None:
@@ -27,6 +68,7 @@ class CoordinatorAgent:
             print(f"[COORDINATOR DEBUG] {label}: {value}")
 
 
+    # ===== Memory Helpers =====
     def _get_short_term_context(self) -> str:
         """
         Retrieve short-term memory context if a Memory Agent is available.
@@ -38,6 +80,31 @@ class CoordinatorAgent:
             return self.memory.get_short_term_context()
         except AttributeError:
             return ""
+        
+
+    def _might_save_memory(self, prompt: str) -> bool:
+        lower_prompt = prompt.lower()
+
+        save_markers = [
+            "remember",
+            "remeber",
+            "save this",
+            "save that",
+            "save my",
+            "store this",
+            "store that",
+            "note this",
+            "note that",
+            "keep in mind",
+            "from now on",
+            "going forward",
+            "for future reference",
+            "don't forget",
+            "do not forget",
+        ]
+
+        return any(marker in lower_prompt for marker in save_markers)
+
         
     def _save_extracted_memories(self, prompt: str) -> str:
         """
@@ -122,21 +189,103 @@ class CoordinatorAgent:
         if not search_query:
             search_query = prompt
 
+        
+        query_memory = self.memory.search_long_term_memory(search_query)
+
+        profile_memory = ""
+
         try:
-            memory_context = self.memory.search_long_term_memory(search_query)
+            profile_memory = self.memory.get_profile_memory()
         except AttributeError:
-            return ""
-        except Exception as e:
-            self._debug("LONG-TERM MEMORY SEARCH ERROR", e)
+            profile_memory = ""
+
+        parts = []
+
+        if query_memory.strip() and query_memory.strip() != "No matching long-term memories found.":
+            parts.append(query_memory)
+
+        if profile_memory.strip() and profile_memory.strip() != "No matching long-term memories found.":
+            parts.append(profile_memory)
+
+        combined = "\n\n".join(parts)
+
+        if not combined.strip():
             return ""
 
-        self._debug("RETRIEVED LONG-TERM MEMORY", memory_context)
-
-        if memory_context.strip() == "No matching long-term memories found.":
-            return ""
-
-        return memory_context
+        return combined
     
+
+    def _save_assistant_response(self, response: str) -> None:
+        """
+        Avoids repeating the same memory-save block multiple times.
+        """
+        if self.memory is None:
+            return
+        try:
+            self.memory.save_short_term(role="assistant", content=response)
+        except AttributeError:
+            pass
+
+    
+    # ===== Routing Helpers =====
+    def _get_last_result_for_action(self, observations: list[dict], action: str, action_input: str) -> str:
+        action = action.strip()
+        action_input = action_input.strip()
+
+        for observation in reversed(observations):
+            if (
+                observation.get("action", "").strip() == action
+                and observation.get("input", "").strip() == action_input
+            ):
+                return observation.get("result", "")
+
+        return ""
+
+    def _normalise_action_key(self, action: str, action_input: str) -> str:
+        """
+        Create a stable key for detecting repeated iterative actions.
+        """
+        return f"{action.strip()}::{action_input.strip()}"
+
+
+    def _is_write_action(self, action: str) -> bool:
+        """
+        Return True if an action changes the filesystem.
+        """
+        return action in WRITE_ACTIONS
+
+
+    def _is_inspection_action(self, action: str) -> bool:
+        """
+        Return True if an action only inspects project state.
+        """
+        return action in INSPECTION_ACTIONS
+    
+
+    def _is_progress_action(self, action: str) -> bool:
+        """
+        Return True if an action makes progress beyond inspection.
+        """
+        return action in PROGRESS_ACTIONS
+
+
+    def _count_inspection_steps_since_last_write(self, observations: list[dict]) -> int:
+        """
+        Count how many consecutive inspection steps happened since the last write action.
+        """
+        count = 0
+
+        for observation in reversed(observations):
+            action = observation.get("action", "")
+
+            if self._is_write_action(action):
+                break
+
+            if self._is_inspection_action(action):
+                count += 1
+
+        return count
+
 
     def _looks_like_debug_fragment(self, prompt: str) -> bool:
         lower_prompt = prompt.lower().strip()
@@ -230,6 +379,16 @@ class CoordinatorAgent:
             "edit the file",
             "write it to",
             "put it in",
+            "pdf",
+            "attached",
+            "attachment",
+            "uploaded",
+            "input file",
+            "document",
+            "from memory",
+            "use my information",
+            "my information",
+            "my details",
         ]
 
         return (
@@ -270,7 +429,119 @@ class CoordinatorAgent:
         }
 
         return lower_prompt in short_follow_ups
+    
 
+    def _looks_like_project_fix_task(self, prompt: str) -> bool:
+        lower_prompt = prompt.lower()
+
+        project_words = [
+            "project",
+            "codebase",
+            "source code",
+            "program",
+            "app",
+            ".py",
+            "main.py",
+        ]
+
+        fix_words = [
+            "fix",
+            "repair",
+            "debug",
+            "complete",
+            "continue",
+            "make it run",
+            "make it work",
+            "not working",
+            "broken",
+            "incomplete",
+            "missing",
+            "error",
+        ]
+
+        return (
+            any(word in lower_prompt for word in project_words)
+            and any(word in lower_prompt for word in fix_words)
+        )
+    
+
+    def _looks_like_project_build_task(self, prompt: str) -> bool:
+        lower_prompt = prompt.lower()
+
+        build_words = [
+            "create",
+            "build",
+            "make",
+            "generate",
+            "scaffold",
+            "set up",
+            "setup",
+        ]
+
+        project_words = [
+            "project",
+            "repo",
+            "repository",
+            "pipeline",
+            "app",
+            "program",
+            "game",
+            "codebase",
+        ]
+
+        return (
+            any(word in lower_prompt for word in build_words)
+            and any(word in lower_prompt for word in project_words)
+        )
+
+
+    def _should_use_iterative_mode(self, prompt: str) -> bool:
+        if self._looks_like_project_fix_task(prompt):
+            self._debug("ITERATIVE ROUTER RULE", "Project fix task detected.")
+            return True
+
+        if self._looks_like_project_build_task(prompt):
+            self._debug("ITERATIVE ROUTER RULE", "Project build task detected.")
+            return True
+
+        short_term_context = self._get_short_term_context()
+
+        router_user_prompt = (
+            f"Recent conversation context:\n"
+            f"{short_term_context if short_term_context else 'None'}\n\n"
+            f"User request:\n{prompt}"
+        )
+
+        result = self.client.ask(
+            prompt=router_user_prompt,
+            system_prompt=prompts.iterative_mode_router_prompt,
+            temperature=0,
+        )
+
+        if not result.ok:
+            self._debug("ITERATIVE ROUTER ERROR", result.error)
+            return False
+
+        self._debug("RAW ITERATIVE ROUTER RESULT", result.content)
+
+        try:
+            cleaned = re.sub(r"<think>.*?</think>", "", result.content, flags=re.DOTALL).strip()
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+
+            if start == -1 or end == -1 or end <= start:
+                return False
+
+            parsed = json.loads(cleaned[start:end + 1])
+        except Exception as e:
+            self._debug("ITERATIVE ROUTER PARSE ERROR", e)
+            return False
+
+        decision = bool(parsed.get("use_iterative_mode", False))
+        self._debug("SHOULD USE ITERATIVE MODE", decision)
+
+        return decision
+    
 
     def is_simple_question(self, prompt: str) -> bool:
         """
@@ -296,19 +567,7 @@ class CoordinatorAgent:
         
         return result.content.strip().upper().startswith("SIMPLE")
     
-
-    def _save_assistant_response(self, response: str) -> None:
-        """
-        Avoids repeating the same memory-save block multiple times.
-        """
-        if self.memory is None:
-            return
-        try:
-            self.memory.save_short_term(role="assistant", content=response)
-        except AttributeError:
-            pass
-
-
+    # ===== Main Entry Points =====
     def handle(self, prompt: str) -> str:
         if self.memory is not None:
             try:
@@ -318,12 +577,32 @@ class CoordinatorAgent:
 
         self._debug("ORIGINAL PROMPT", prompt)
 
-        memory_save_result = self._save_extracted_memories(prompt)
+        memory_save_result = ""
 
-        if memory_save_result:
-            self._debug("MEMORY SAVE RESULT", memory_save_result)
+        if self._might_save_memory(prompt):
+            memory_save_result = self._save_extracted_memories(prompt)
+
+            if memory_save_result:
+                self._debug("MEMORY SAVE RESULT", memory_save_result)
 
         long_term_memory_context = self._get_relevant_long_term_memory(prompt)
+
+        should_check_iterative = not (
+            self._looks_like_direct_writing_task(prompt)
+            or self._looks_like_directory_listing(prompt)
+        )
+
+        iterative_decision = False
+
+        if should_check_iterative:
+            iterative_decision = self._should_use_iterative_mode(prompt)
+
+        self._debug("SHOULD USE ITERATIVE MODE", iterative_decision)
+
+        if iterative_decision:
+            response = self.handle_iterative(prompt)
+            self._save_assistant_response(response)
+            return response
 
         if self._looks_like_debug_fragment(prompt):
             is_simple = False
@@ -380,17 +659,28 @@ class CoordinatorAgent:
             return response
 
         current_prompt = prompt
-        max_iterations = 3
+        max_iterations = self.reasoning_settings.max_iterations if self.reasoning_settings else 3
         last_result = ""
 
         for iteration in range(max_iterations):
             self._debug("ITERATION", iteration + 1)
             self._debug("CURRENT PROMPT", current_prompt)
 
-            plan = self.planner.create_plan(current_prompt)
+            plan = self.planner.create_plan(
+                current_prompt,
+                retrieved_memory_context=long_term_memory_context,
+            )
+            self.last_trace = {
+                "plan": plan,
+                "execution_data": {},
+                "steps": [],
+                "review": {},
+            }
             self._debug("PLAN", plan)
 
             execution_data = self.plan_executor.execute_plan_once(prompt, plan)
+            self.last_trace["execution_data"] = execution_data
+            self.last_trace["steps"] = execution_data.get("steps", [])
             self._debug("EXECUTION DATA", execution_data)
 
             context = execution_data.get("context", "")
@@ -476,10 +766,13 @@ class CoordinatorAgent:
             last_result = draft_result
             self._debug("DRAFT RESULT", draft_result)
 
-            if self.reviewer is None or not plan.get("needs_review", False):
+            reviewer_allowed = self.reasoning_settings.allow_reviewer if self.reasoning_settings else True
+
+            if self.reviewer is None or not plan.get("needs_review", False) or not reviewer_allowed:
                 break
 
             review = self.reviewer.review(prompt, draft_result)
+            self.last_trace["review"] = review
             self._debug("REVIEW RESULT", review)
 
             if review.get("approved", False):
@@ -496,3 +789,461 @@ class CoordinatorAgent:
         self._save_assistant_response(response)
 
         return response
+    
+
+    def _get_iterative_snapshot_metadata(self) -> dict:
+        if self.plan_executor is None:
+            return {
+                "snapshot_result": "",
+                "snapshot_path": "",
+                "snapshot_target": "",
+            }
+
+        transaction_manager = getattr(self.plan_executor, "transaction_manager", None)
+
+        if transaction_manager is None:
+            return {
+                "snapshot_result": "",
+                "snapshot_path": "",
+                "snapshot_target": "",
+            }
+
+        snapshot_path = ""
+        snapshot_target = ""
+
+        try:
+            snapshot_path = transaction_manager.get_last_snapshot_path()
+            snapshot_target = transaction_manager.get_last_target_path()
+        except AttributeError:
+            pass
+
+        return {
+            "snapshot_result": "",
+            "snapshot_path": snapshot_path,
+            "snapshot_target": snapshot_target,
+        }
+
+    
+    def handle_iterative(self, prompt: str, max_steps: int = 20) -> str:
+        observations = []
+        execution_results = []
+        steps_trace = []
+
+        snapshot_result = ""
+
+        used_action_keys = set()
+        viewed_files_since_last_write = set()
+        needs_test_after_write = False
+
+        def shorten_for_user(text: str, max_chars: int = 1200) -> str:
+            if not isinstance(text, str):
+                return ""
+
+            cleaned = text.strip()
+
+            if len(cleaned) <= max_chars:
+                return cleaned
+
+            return cleaned[:max_chars] + "\n\n... [truncated]"
+
+        def user_stop_message(reason: str, detail: str = "") -> str:
+            message = reason.strip()
+
+            cleaned_detail = shorten_for_user(detail)
+
+            if cleaned_detail:
+                message += "\n\n" + cleaned_detail
+
+            message += "\n\nCheck Debug / Internals for the full execution trace."
+
+            return message
+
+        def snapshot_metadata() -> dict:
+            return self._get_iterative_snapshot_metadata()
+
+        def set_trace(
+            final_step=None,
+            stop_reason: str = "",
+            include_snapshot_top_level: bool = False,
+        ) -> None:
+            metadata = snapshot_metadata()
+
+            trace = {
+                "mode": "ITERATIVE",
+                "steps": steps_trace,
+                "snapshot_result": snapshot_result,
+                "execution_data": {
+                    "snapshot_result": snapshot_result,
+                    "snapshot_path": metadata["snapshot_path"],
+                    "snapshot_target": metadata["snapshot_target"],
+                    "steps": steps_trace,
+                },
+            }
+
+            if final_step is not None:
+                trace["final_step"] = final_step
+
+            if stop_reason:
+                trace["stop_reason"] = stop_reason
+
+            if include_snapshot_top_level:
+                trace["snapshot_path"] = metadata["snapshot_path"]
+                trace["snapshot_target"] = metadata["snapshot_target"]
+
+            self.last_trace = trace
+
+        # Deterministic first step for project/directory inspection tasks.
+        first_step_result = self.plan_executor.execute_single_action(
+            prompt=prompt,
+            action="list_directory",
+            action_input="",
+            previous_results=[],
+        )
+
+        first_action_key = self._normalise_action_key("list_directory", "")
+        used_action_keys.add(first_action_key)
+
+        observations.append(
+            {
+                "action": "list_directory",
+                "input": "",
+                "result": first_step_result.get("result", ""),
+            }
+        )
+
+        steps_trace.append(first_step_result)
+        execution_results.append(first_step_result.get("result", ""))
+
+        if not first_step_result.get("ok", False):
+            set_trace(stop_reason="Initial directory inspection failed.")
+
+            return user_stop_message(
+                "I could not inspect the active directory.",
+                first_step_result.get("result", ""),
+            )
+
+        for step_number in range(2, max_steps + 1):
+            next_step = self.planner.create_next_step(
+                original_prompt=prompt,
+                observations=observations,
+            )
+
+            self._debug("ITERATIVE NEXT STEP", next_step)
+
+            status = next_step.get("status", "FINISH")
+            action = next_step.get("action", "NONE")
+            action_input = next_step.get("input", "")
+
+            if status == "FINISH":
+                final_response = next_step.get("final_response", "").strip()
+
+                if needs_test_after_write:
+                    set_trace(
+                        final_step=next_step,
+                        stop_reason="Planner finished before testing changed files.",
+                    )
+
+                    return user_stop_message(
+                        "I stopped before finishing because files were changed but the project was not run yet.",
+                        "The next step should be `run_python_file` on the project entry point, such as `main.py`.",
+                    )
+
+                set_trace(final_step=next_step)
+
+                if final_response:
+                    return final_response
+
+                return "Done."
+
+            if action == "NONE":
+                set_trace(
+                    final_step=next_step,
+                    stop_reason="Planner returned no action.",
+                )
+
+                return user_stop_message(
+                    "I could not decide the next action."
+                )
+
+            action_key = self._normalise_action_key(action, action_input)
+
+            # Hard loop prevention: never allow exact same action/input twice.
+            if action_key in used_action_keys:
+                if action != "view_file":
+                    retry_step = self.planner.create_next_step_after_repetition(
+                        original_prompt=prompt,
+                        observations=observations,
+                        repeated_action=action,
+                        repeated_input=action_input,
+                    )
+
+                    self._debug("ITERATIVE RETRY AFTER REPETITION", retry_step)
+
+                    retry_status = retry_step.get("status", "FINISH")
+                    retry_action = retry_step.get("action", "NONE")
+                    retry_input = retry_step.get("input", "")
+
+                    retry_key = self._normalise_action_key(retry_action, retry_input)
+
+                    if (
+                        retry_status != "CONTINUE"
+                        or retry_action == "NONE"
+                        or retry_key in used_action_keys
+                    ):
+                        set_trace(
+                            final_step=retry_step,
+                            stop_reason=f"Repeated iterative action detected: {action_key}",
+                        )
+
+                        final_response = retry_step.get("final_response", "").strip()
+
+                        if final_response:
+                            return final_response
+
+                        return user_stop_message(
+                            "I stopped because the planner repeated the same action and could not recover with a different next step.",
+                            f"Repeated action: `{action}` with input `{action_input}`.",
+                        )
+
+                    action = retry_action
+                    action_input = retry_input
+                    action_key = retry_key
+
+                else:
+                    if not action_input.strip().endswith(".py"):
+                        set_trace(
+                            final_step=next_step,
+                            stop_reason=f"Repeated non-Python file inspection detected: {action_key}",
+                        )
+
+                        return user_stop_message(
+                            "I stopped because the planner repeated a file inspection, but the repeated file is not a Python file I should auto-edit.",
+                            (
+                                f"Repeated file: `{action_input}`.\n\n"
+                                "The next step should be a clear `edit_file`, `create_file`, `run_python_file`, or `FINISH`."
+                            ),
+                        )
+
+                    forced_action = "edit_file"
+                    forced_input = (
+                        f"{action_input}::"
+                        "Use the file content already shown in the observations. "
+                        "Apply the smallest targeted fix based on the observed API mismatches, "
+                        "missing methods, broken imports, or runtime issue. "
+                        "Preserve unrelated working code."
+                    )
+
+                    self._debug(
+                        "REPEATED ACTION FALLBACK",
+                        f"Forcing {forced_action} with input {forced_input}",
+                    )
+
+                    if (
+                        self.plan_executor.transaction_manager is not None
+                        and not snapshot_result
+                    ):
+                        snapshot_directory = self.plan_executor.get_snapshot_directory_for_action(
+                            prompt=prompt,
+                            action=forced_action,
+                            action_input=forced_input,
+                        )
+
+                        if snapshot_directory:
+                            snapshot_result = self.plan_executor.transaction_manager.snapshot_directory(
+                                snapshot_directory
+                            )
+                        else:
+                            snapshot_result = self.plan_executor.transaction_manager.snapshot_active_directory()
+
+                        self._debug("ITERATIVE SNAPSHOT DIRECTORY", snapshot_directory)
+                        self._debug("ITERATIVE SNAPSHOT RESULT", snapshot_result)
+
+                        if snapshot_result.startswith("Error"):
+                            set_trace(
+                                final_step=next_step,
+                                stop_reason="Snapshot creation failed.",
+                            )
+
+                            return user_stop_message(
+                                "I could not create a safety snapshot before editing.",
+                                snapshot_result,
+                            )
+
+                    step_result = self.plan_executor.execute_single_action(
+                        prompt=prompt,
+                        action=forced_action,
+                        action_input=forced_input,
+                        previous_results=execution_results,
+                    )
+
+                    observations.append(
+                        {
+                            "action": forced_action,
+                            "input": forced_input,
+                            "result": step_result.get("result", ""),
+                        }
+                    )
+
+                    steps_trace.append(step_result)
+                    execution_results.append(step_result.get("result", ""))
+
+                    if step_result.get("ok", False):
+                        viewed_files_since_last_write.clear()
+                        needs_test_after_write = True
+                        used_action_keys.add(
+                            self._normalise_action_key(forced_action, forced_input)
+                        )
+                        continue
+
+                    if self.plan_executor.transaction_manager is not None and snapshot_result:
+                        rollback_result = self.plan_executor.transaction_manager.rollback_last_snapshot()
+                        execution_results.append(rollback_result)
+
+                    set_trace(
+                        stop_reason="Repeated inspection fallback failed.",
+                    )
+
+                    return user_stop_message(
+                        "I stopped because the repeated-inspection recovery step failed.",
+                        step_result.get("result", ""),
+                    )
+
+            normalised_view_file = ""
+
+            # Prevent viewing the same file repeatedly before any edit/write happens.
+            if action == "view_file":
+                normalised_view_file = action_input.strip()
+
+                if normalised_view_file in viewed_files_since_last_write:
+                    set_trace(
+                        final_step=next_step,
+                        stop_reason=(
+                            "Repeated file view detected before any write action: "
+                            f"{normalised_view_file}"
+                        ),
+                    )
+
+                    return user_stop_message(
+                        "I stopped because the agent tried to view the same file again without making progress.",
+                        (
+                            f"The repeated file was: `{normalised_view_file}`.\n\n"
+                            "The next step should be editing the faulty file, creating a missing file, "
+                            "or finishing with a clear diagnosis."
+                        ),
+                    )
+
+            inspection_count = self._count_inspection_steps_since_last_write(observations)
+
+
+            # After enough inspection, force progress.
+            # However, allow important unseen project files to be inspected first.
+            if (
+                self._is_inspection_action(action)
+                and inspection_count >= 6
+            ):
+                set_trace(
+                    final_step=next_step,
+                    stop_reason="Too many inspection steps without a write action.",
+                )
+
+                return user_stop_message(
+                    "I stopped because the agent inspected several files/directories without making a concrete change.",
+                    "For this type of task, the next step should be `edit_file`, `create_file`, `run_python_file`, or a final diagnosis.",
+                )
+
+            if normalised_view_file:
+                viewed_files_since_last_write.add(normalised_view_file)
+
+            used_action_keys.add(action_key)
+
+            if (
+                self.plan_executor.transaction_manager is not None
+                and not snapshot_result
+                and self._is_write_action(action)
+            ):
+                snapshot_directory = self.plan_executor.get_snapshot_directory_for_action(
+                    prompt=prompt,
+                    action=action,
+                    action_input=action_input,
+                )
+
+                if snapshot_directory:
+                    snapshot_result = self.plan_executor.transaction_manager.snapshot_directory(
+                        snapshot_directory
+                    )
+                else:
+                    snapshot_result = self.plan_executor.transaction_manager.snapshot_active_directory()
+
+                self._debug("ITERATIVE SNAPSHOT DIRECTORY", snapshot_directory)
+                self._debug("ITERATIVE SNAPSHOT RESULT", snapshot_result)
+
+                if snapshot_result.startswith("Error"):
+                    set_trace(
+                        final_step=next_step,
+                        stop_reason="Snapshot creation failed.",
+                    )
+
+                    return user_stop_message(
+                        "I could not create a safety snapshot before changing files.",
+                        snapshot_result,
+                    )
+
+                metadata = snapshot_metadata()
+                self._debug("ITERATIVE SNAPSHOT PATH", metadata["snapshot_path"])
+                self._debug("ITERATIVE SNAPSHOT TARGET", metadata["snapshot_target"])
+
+            step_result = self.plan_executor.execute_single_action(
+                prompt=prompt,
+                action=action,
+                action_input=action_input,
+                previous_results=execution_results,
+            )
+
+            observations.append(
+                {
+                    "action": action,
+                    "input": action_input,
+                    "result": step_result.get("result", ""),
+                }
+            )
+
+            steps_trace.append(step_result)
+            execution_results.append(step_result.get("result", ""))
+
+            if self._is_write_action(action):
+                viewed_files_since_last_write.clear()
+                needs_test_after_write = True
+
+            if action == "run_python_file":
+                needs_test_after_write = False
+
+            if not step_result.get("ok", False):
+                # Important:
+                # Running the project can fail as part of normal debugging.
+                # Do not rollback immediately and do not dump all execution results to the user.
+                if action == "run_python_file":
+                    needs_test_after_write = True
+                    continue
+
+                if self.plan_executor.transaction_manager is not None and snapshot_result:
+                    rollback_result = self.plan_executor.transaction_manager.rollback_last_snapshot()
+                    execution_results.append(rollback_result)
+
+                set_trace(
+                    stop_reason="Action failed.",
+                    include_snapshot_top_level=True,
+                )
+
+                return user_stop_message(
+                    "I stopped because an action failed.",
+                    step_result.get("result", ""),
+                )
+
+        set_trace(
+            stop_reason="Maximum iterative steps reached.",
+            include_snapshot_top_level=True,
+        )
+
+        return user_stop_message(
+            "I stopped because the task reached the maximum number of steps. Some work may have been completed, but the task may not be fully finished."
+        )

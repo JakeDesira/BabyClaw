@@ -13,6 +13,7 @@ from .file_tools import (
     prepare_guarded_edit_file,
     write_guarded_file,
     find_guarded_file,
+    run_python_file,
 )
 
 from .directory_tools import (
@@ -21,6 +22,7 @@ from .directory_tools import (
     move_path,
     copy_path,
     rename_path,
+    move_directory_contents,
 )
 
 from .transaction_manager import TransactionManager

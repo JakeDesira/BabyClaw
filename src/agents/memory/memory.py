@@ -220,6 +220,26 @@ class MemoryAgent:
 
 
     # ===== SAVED ACCESSIBLE PATHS =====
+    def save_active_accessible_path(self, path_text: str) -> str:
+        """
+        Save the currently active accessible path as a persistent setting.
+        This lets terminal and Streamlit restore the same active directory.
+        """
+        cleaned_path = path_text.strip().strip("\"'")
+
+        if not cleaned_path:
+            return "Error: No active path provided."
+
+        resolved_path = str(Path(cleaned_path).expanduser().resolve())
+
+        try:
+            return self.memory_store.upsert_setting(
+                key="active_accessible_path",
+                value=resolved_path,
+            )
+        except Exception as e:
+            return f"Error saving active accessible path: {e}"
+
 
     def save_accessible_path(self, path_text: str) -> str:
         """
@@ -347,6 +367,43 @@ class MemoryAgent:
             for memory in memories
             if memory.get("memory_type") == "accessible_path"
         ]
+    
+    def get_profile_memory(self, limit: int = 20) -> str:
+        """
+        Retrieve general user/profile memories useful for personalised writing.
+        """
+        memories = self.memory_store.get_memories_by_types(
+            memory_types=[
+                "user_info",
+                "preference",
+                "project",
+                "contact",
+                "workflow",
+            ],
+            limit=limit,
+        )
+
+        return self.memory_store.format_memories(memories)
+    
+        # ===== ACTIVE ACCESSIBLE PATH ====
+    def get_active_accessible_path(self) -> str:
+        """
+        Return the saved active/default workspace path.
+        """
+        try:
+            return self.memory_store.get_setting("active_accessible_path")
+        except Exception:
+            return ""
+
+
+    def clear_active_accessible_path(self) -> str:
+        """
+        Clear the saved active/default workspace path.
+        """
+        try:
+            return self.memory_store.delete_setting("active_accessible_path")
+        except Exception as e:
+            return f"Error clearing active accessible path: {e}"
 
 
     def handle(self, action: str, action_input: str = "") -> str:
@@ -397,5 +454,14 @@ class MemoryAgent:
 
         if action == "revoke_accessible_path":
             return self.revoke_accessible_path(action_input)
+        
+        if action == "save_active_accessible_path":
+            return self.save_active_accessible_path(action_input)
+
+        if action == "get_active_accessible_path":
+            return self.get_active_accessible_path()
+
+        if action == "clear_active_accessible_path":
+            return self.clear_active_accessible_path()
 
         return f"Memory could not find a supported action for '{action}'."

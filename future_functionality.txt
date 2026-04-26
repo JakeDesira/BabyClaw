@@ -1,9 +1,6 @@
 Others:
-- test for creative writing
 - update Design
-- reviewer is only set for planner
 
 Requirements:
 - check about image support
 - Add whatsapp capability
-- Backup reviewer failer
