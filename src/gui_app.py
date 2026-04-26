@@ -166,10 +166,32 @@ CUSTOM_CSS = """
     }
 
     .message-text {
-        white-space: pre-wrap;
-        line-height: 1.45;
-        font-size: 1.05rem;
-        font-weight: 500;
+        line-height: 1.55;
+        font-size: 1.02rem;
+        font-weight: 450;
+    }
+
+    .message-text p {
+        margin: 0.45rem 0 0.85rem 0;
+    }
+
+    .message-text strong {
+        font-weight: 800;
+    }
+
+    .message-text a {
+        color: #4da3ff;
+        text-decoration: none;
+        font-weight: 650;
+    }
+
+    .message-text a:hover {
+        text-decoration: underline;
+    }
+
+    div[data-testid="stChatMessage"] {
+        padding: 1rem 1.15rem !important;
+        border-radius: 16px !important;
     }
 
     div[data-testid="stChatMessageAvatarUser"],

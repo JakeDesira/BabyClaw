@@ -1,6 +1,0 @@
-Others:
-- update Design
-
-Requirements:
-- check about image support
-- Add whatsapp capability
