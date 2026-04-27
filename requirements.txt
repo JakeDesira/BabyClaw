@@ -1,4 +1,4 @@
-streollama
+ollama
 pypdf
 streamlit
 dotenv
