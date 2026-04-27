@@ -356,6 +356,61 @@ class PlannerAgent:
     
 
     # ===== Path / Normalisation Helpers ======
+    def _deduplicate_create_file_actions(self, executor_actions: list[dict]) -> list[dict]:
+        """
+        Prevent plans like:
+        create_file greeting.txt
+        create_file greeting.txt::some content
+
+        The second action tries to create the same file again and causes:
+        Error: File already exists.
+
+        If duplicates exist, prefer the version that already includes explicit content.
+        Otherwise keep the first one.
+        """
+        selected_by_path = {}
+        order = []
+
+        for item in executor_actions:
+            action = item.get("action", "")
+            action_input = item.get("input", "")
+
+            if action != "create_file":
+                order.append(item)
+                continue
+
+            filepath = action_input.split("::", 1)[0].strip().strip("'\"")
+
+            if not filepath:
+                order.append(item)
+                continue
+
+            normalised_key = filepath.replace("\\", "/").lower()
+
+            has_explicit_content = "::" in action_input
+
+            if normalised_key not in selected_by_path:
+                selected_by_path[normalised_key] = item
+                order.append(item)
+                continue
+
+            existing_item = selected_by_path[normalised_key]
+            existing_has_explicit_content = "::" in existing_item.get("input", "")
+
+            # Prefer the duplicate that contains actual explicit content.
+            if has_explicit_content and not existing_has_explicit_content:
+                selected_by_path[normalised_key] = item
+
+                for index, existing_order_item in enumerate(order):
+                    if existing_order_item is existing_item:
+                        order[index] = item
+                        break
+
+            # Otherwise ignore the duplicate.
+
+        return order
+
+
     def _find_first_matching_path(self, root: Path, file_name: str) -> Path | None:
         try:
             for candidate in root.rglob(file_name):
@@ -726,6 +781,11 @@ class PlannerAgent:
                 item["action"] = "move_directory_contents"
                 item["input"] = action_input
 
+
+        plan["executor_actions"] = self._deduplicate_create_file_actions(
+            plan.get("executor_actions", [])
+        )
+
         return plan
     
 
@@ -918,5 +978,3 @@ class PlannerAgent:
             }
 
         return self._validate_next_step(step)
-    
-    

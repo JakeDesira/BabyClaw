@@ -571,6 +571,7 @@ class PlanExecutor:
 
         if plan.get("needs_executor") and self.executor is not None:
             actions = plan.get("executor_actions", [])
+            created_file_targets = set()
 
             for item in actions:
                 action = item.get("action", "").strip()
@@ -591,6 +592,37 @@ class PlanExecutor:
 
                 self._debug("ABOUT TO EXECUTE ACTION", action)
                 self._debug("ABOUT TO EXECUTE INPUT", resolved_input)
+
+                if action == "create_file":
+                    create_target = str(
+                        Path(resolved_input.split("::", 1)[0].strip()).expanduser().resolve()
+                    )
+
+                    if create_target in created_file_targets:
+                        skip_message = (
+                            f"Skipped duplicate create_file action for already-created file in this plan: "
+                            f"{create_target}"
+                        )
+
+                        self._debug("SKIPPED DUPLICATE CREATE_FILE", skip_message)
+
+                        step_data = {
+                            "ok": True,
+                            "action": action,
+                            "input": action_input,
+                            "resolved_input": resolved_input,
+                            "result": skip_message,
+                            "verification": {
+                                "ok": True,
+                                "feedback": skip_message,
+                            },
+                        }
+
+                        steps_trace.append(step_data)
+                        execution_results.append(skip_message)
+                        continue
+
+                    created_file_targets.add(create_target)
 
                 step_data = self._execute_prepared_action(
                     prompt=prompt,
