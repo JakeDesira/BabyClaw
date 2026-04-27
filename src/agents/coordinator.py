@@ -928,6 +928,7 @@ class CoordinatorAgent:
         observations = []
         execution_results = []
         steps_trace = []
+        planner_steps = []
 
         snapshot_result = ""
 
@@ -971,6 +972,12 @@ class CoordinatorAgent:
 
             trace = {
                 "mode": "ITERATIVE",
+                "plan": {
+                    "plan_text": "Iterative mode: planner chooses one next action at a time.",
+                    "mode": "ITERATIVE",
+                    "planner_steps": planner_steps,
+                },
+                "planner_steps": planner_steps,
                 "steps": steps_trace,
                 "snapshot_result": snapshot_result,
                 "execution_data": {
@@ -1029,6 +1036,18 @@ class CoordinatorAgent:
                 observations=observations,
             )
 
+            planner_steps.append(
+                {
+                    "step_number": step_number,
+                    "type": "planner_next_step",
+                    "thought_summary": next_step.get("thought_summary", ""),
+                    "status": next_step.get("status", ""),
+                    "action": next_step.get("action", ""),
+                    "input": next_step.get("input", ""),
+                    "final_response": next_step.get("final_response", ""),
+                }
+            )
+
             self._debug("ITERATIVE NEXT STEP", next_step)
 
             status = next_step.get("status", "FINISH")
@@ -1069,6 +1088,20 @@ class CoordinatorAgent:
                         observations=observations,
                         repeated_action=action,
                         repeated_input=action_input,
+                    )
+
+                    planner_steps.append(
+                        {
+                            "step_number": step_number,
+                            "type": "planner_retry_after_repetition",
+                            "thought_summary": retry_step.get("thought_summary", ""),
+                            "status": retry_step.get("status", ""),
+                            "action": retry_step.get("action", ""),
+                            "input": retry_step.get("input", ""),
+                            "final_response": retry_step.get("final_response", ""),
+                            "repeated_action": action,
+                            "repeated_input": action_input,
+                        }
                     )
 
                     self._debug("ITERATIVE RETRY AFTER REPETITION", retry_step)

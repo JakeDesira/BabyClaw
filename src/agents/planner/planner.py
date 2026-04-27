@@ -774,12 +774,35 @@ class PlannerAgent:
 
             source_text, destination_text = action_input.split("::", 1)
 
-            source_name = Path(source_text.strip().strip("'\"")).name
-            destination_parts = Path(destination_text.strip().strip("'\"")).parts
+            source_clean = source_text.strip().strip("'\"")
+            destination_clean = destination_text.strip().strip("'\"")
 
-            if source_name and source_name in destination_parts:
-                item["action"] = "move_directory_contents"
-                item["input"] = action_input
+            # If the source looks like a file, never convert to move_directory_contents.
+            if Path(source_clean).suffix:
+                continue
+
+            try:
+                resolved_source = Path(
+                    self._resolve_relative_path(source_clean, must_exist=True)
+                ).resolve()
+
+                resolved_destination = Path(
+                    self._resolve_relative_path(destination_clean)
+                ).resolve()
+
+                # Only convert when the source is actually a directory
+                # and the destination is inside that same directory.
+                if (
+                    resolved_source.exists()
+                    and resolved_source.is_dir()
+                    and resolved_source != resolved_destination
+                    and resolved_source in resolved_destination.parents
+                ):
+                    item["action"] = "move_directory_contents"
+                    item["input"] = action_input
+
+            except Exception:
+                pass
 
 
         plan["executor_actions"] = self._deduplicate_create_file_actions(

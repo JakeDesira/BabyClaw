@@ -440,6 +440,9 @@ class ExecutionVerifier:
         stripped_content = content.strip()
 
         if not stripped_content:
+            if safe.name == "__init__.py":
+                return None
+
             return {
                 "ok": False,
                 "feedback": f"Python quality verification failed for {safe}: file is empty.",

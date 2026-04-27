@@ -1350,10 +1350,38 @@ def render_debug_tab():
 
     with planner_tab:
         plan = trace.get("plan")
+        planner_steps = trace.get("planner_steps", [])
 
         if plan:
             st.json(plan)
-        else:
+
+        if planner_steps:
+            st.divider()
+            st.subheader("Iterative planner steps")
+
+            for index, planner_step in enumerate(planner_steps, start=1):
+                with st.container(border=True):
+                    st.markdown(f"### Planner step {index}")
+
+                    st.caption("Thought")
+                    st.write(planner_step.get("thought_summary", ""))
+
+                    st.caption("Status")
+                    st.code(planner_step.get("status", ""))
+
+                    st.caption("Action")
+                    st.code(planner_step.get("action", ""))
+
+                    st.caption("Input")
+                    st.code(planner_step.get("input", ""))
+
+                    final_response = planner_step.get("final_response", "")
+
+                    if final_response:
+                        st.caption("Final response")
+                        st.write(final_response)
+
+        if not plan and not planner_steps:
             st.caption("No planner output yet.")
 
     with executor_tab:
