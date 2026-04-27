@@ -30,6 +30,7 @@ class PlanExecutor:
         self.execution_verifier = execution_verifier
         self.transaction_manager = transaction_manager
         self._last_write_input = ""
+        self.task_working_directory = ""
         self.debug = debug
 
 
@@ -43,6 +44,50 @@ class PlanExecutor:
             return []
 
         return self.filesystem_guard.list_approved()
+    
+
+    def set_task_working_directory(self, directory: str) -> None:
+        cleaned = directory.strip().strip("'\"")
+
+        if not cleaned:
+            self.task_working_directory = ""
+            return
+
+        resolved = Path(cleaned).expanduser().resolve()
+
+        if self.filesystem_guard is not None:
+            try:
+                if not self.filesystem_guard.is_approved(resolved):
+                    return
+            except AttributeError:
+                pass
+
+        self.task_working_directory = str(resolved)
+
+
+    def clear_task_working_directory(self) -> None:
+        self.task_working_directory = ""
+
+
+    def _get_task_or_active_directory(self) -> str:
+        if self.task_working_directory:
+            return self.task_working_directory
+
+        if self.filesystem_guard is not None:
+            try:
+                active_directory = self.filesystem_guard.get_active_directory()
+
+                if active_directory:
+                    return active_directory
+            except AttributeError:
+                pass
+
+        approved_dirs = self._get_approved_directories()
+
+        if approved_dirs:
+            return approved_dirs[-1]
+
+        return ""
 
     # ===== Directory/Path Helpers =====
     def _find_first_matching_path(self, root: Path, file_name: str) -> Path | None:
@@ -112,17 +157,11 @@ class PlanExecutor:
 
                 return str(candidate)
 
-        # 2. Otherwise, use the active directory, not the latest approved directory.
-        active_directory = ""
+        # 2. Otherwise, use the task working directory first, then active directory.
+        base_directory = self._get_task_or_active_directory()
 
-        if self.filesystem_guard is not None:
-            try:
-                active_directory = self.filesystem_guard.get_active_directory()
-            except AttributeError:
-                active_directory = ""
-
-        if active_directory:
-            base_dir = Path(active_directory)
+        if base_directory:
+            base_dir = Path(base_directory)
         else:
             base_dir = Path(approved_dirs[-1])
 
@@ -143,6 +182,10 @@ class PlanExecutor:
         return str(candidate)
 
 
+    def _get_active_or_default_directory(self) -> str:
+        return self._get_task_or_active_directory()
+
+
     def _get_snapshot_directory_for_plan(self, prompt: str, plan: dict) -> str:
         approved_dirs = self._get_approved_directories()
 
@@ -161,6 +204,11 @@ class PlanExecutor:
 
             if snapshot_directory:
                 return snapshot_directory
+
+        task_or_active = self._get_task_or_active_directory()
+
+        if task_or_active:
+            return task_or_active
 
         return approved_dirs[-1]
     
@@ -193,19 +241,29 @@ class PlanExecutor:
                 previous_results=[],
             )
         except Exception:
+            task_or_active = self._get_task_or_active_directory()
+
+            if task_or_active:
+                return task_or_active
+
             return approved_dirs[-1]
 
         if action in {"move_path", "move_directory_contents", "copy_path"} and "::" in resolved_input:
             source_part, destination_part = resolved_input.split("::", 1)
 
-            if action == "move_directory_contents":
-                path_part = source_part.strip()
-            else:
+            if action == "copy_path":
                 path_part = destination_part.strip()
+            else:
+                path_part = source_part.strip()
         else:
             path_part = resolved_input.split("::", 1)[0].strip()
 
         if not path_part:
+            task_or_active = self._get_task_or_active_directory()
+
+            if task_or_active:
+                return task_or_active
+
             return approved_dirs[-1]
 
         path = Path(path_part).expanduser().resolve()
@@ -273,9 +331,10 @@ class PlanExecutor:
 
         if "::" in cleaned_input:
             source_path, destination_path = cleaned_input.split("::", 1)
-        elif ":" in cleaned_input:
-            # Repair common planner mistake:
-            # source:destination -> source::destination
+        elif ":" in cleaned_input and "::" not in cleaned_input:
+            if len(cleaned_input) >= 2 and cleaned_input[1] == ":":
+                return cleaned_input
+
             source_path, destination_path = cleaned_input.split(":", 1)
         else:
             return cleaned_input
@@ -305,10 +364,10 @@ class PlanExecutor:
 
         if action == "list_directory":
             if not action_input.strip():
-                approved_dirs = self._get_approved_directories()
+                active_or_default = self._get_active_or_default_directory()
 
-                if approved_dirs:
-                    return approved_dirs[-1]
+                if active_or_default:
+                    return active_or_default
 
             return self._resolve_relative_path(action_input)
 
@@ -331,14 +390,28 @@ class PlanExecutor:
 
 
     # ===== Edit/Memory Helpers =====
-    def _handle_edit_ready(self, step_result: str, prompt: str) -> str:
+    def _handle_edit_ready(self, step_result: str,prompt: str, previous_results: list[str] | None = None) -> str:
         _, filepath, instruction, existing_content = step_result.split("::", 3)
 
         if self.response_generator is None:
             return "No response generator is available for edit_file flow."
 
+        execution_context = "\n\n".join(previous_results or [])
+
+        grounded_prompt = (
+            f"{prompt}\n\n"
+            f"Target file: {filepath}\n\n"
+            "Observed tool results:\n"
+            f"{execution_context if execution_context else 'No tool observations available.'}\n\n"
+            "Important grounding rules:\n"
+            "- Only use files, folders, names, commands, and facts that appear in the observed tool results or existing file content.\n"
+            "- Do not invent project files, folders, tests, commands, classes, or features.\n"
+            "- If a directory was not inspected, do not list its internal files.\n"
+            "- If the existing file contains unverified details, remove or simplify them unless they are confirmed by the observations."
+        )
+
         improved = self.response_generator.improve_file_content(
-            prompt=f"{prompt}\n\nTarget file: {filepath}",
+            prompt=grounded_prompt,
             existing_content=existing_content,
             instruction=instruction,
         )
@@ -401,7 +474,7 @@ class PlanExecutor:
             }
         
 
-    def _execute_prepared_action(self, prompt: str, action: str, action_input: str, resolved_input: str) -> dict:
+    def _execute_prepared_action(self, prompt: str, action: str, action_input: str, resolved_input: str, previous_results: list[str] | None = None) -> dict:
         step_result = self.executor.handle(action, resolved_input, prompt)
 
         if step_result is None:
@@ -410,7 +483,11 @@ class PlanExecutor:
         verification_result = None
 
         if step_result.startswith("EDIT_READY::"):
-            step_result = self._handle_edit_ready(step_result, prompt)
+            step_result = self._handle_edit_ready(
+                step_result=step_result,
+                prompt=prompt,
+                previous_results=previous_results,
+            )
 
             if self.execution_verifier is not None and step_result.startswith("File updated:"):
                 verification_result = self.execution_verifier.verify_action(
@@ -520,8 +597,8 @@ class PlanExecutor:
                     action=action,
                     action_input=action_input,
                     resolved_input=resolved_input,
+                    previous_results=execution_results,
                 )
-
                 step_result = step_data["result"]
                 verification_result = step_data["verification"]
 
@@ -538,11 +615,7 @@ class PlanExecutor:
                     error = verification_result.get("feedback", "Verification failed.")
                     execution_results.append(error)
                     user_visible_results.append(error)
-
-                    if self.transaction_manager is not None:
-                        rollback_result = self.transaction_manager.rollback_last_snapshot()
-                        execution_results.append(rollback_result)
-                        user_visible_results.append(rollback_result)
+                    user_visible_results.append("No automatic rollback was performed.")
 
                     break
 
@@ -618,4 +691,5 @@ class PlanExecutor:
             action=action,
             action_input=action_input,
             resolved_input=resolved_input,
+            previous_results=previous_results or [],
         )

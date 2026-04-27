@@ -96,18 +96,53 @@ class TransactionManager:
         if not self.filesystem_guard.is_approved(target_path):
             return f"Undo failed: target directory is no longer approved: {target_path}"
 
-        try:
-            if target_path.exists():
-                shutil.rmtree(target_path)
+        target_parent = target_path.parent
+        token = uuid.uuid4().hex[:8]
 
-            shutil.copytree(snapshot_path, target_path)
+        restore_temp = target_parent / f".{target_path.name}_restore_{token}"
+        backup_path = target_parent / f".{target_path.name}_backup_{token}"
+
+        try:
+            if restore_temp.exists():
+                shutil.rmtree(restore_temp, ignore_errors=True)
+
+            shutil.copytree(snapshot_path, restore_temp)
+
+            if target_path.exists():
+                target_path.rename(backup_path)
+
+            restore_temp.rename(target_path)
+
+            if backup_path.exists():
+                try:
+                    shutil.rmtree(backup_path)
+                except Exception as cleanup_error:
+                    self.clear_last_snapshot()
+
+                    return (
+                        f"Undo complete. Restored: {target_path}\n\n"
+                        f"Warning: backup cleanup failed: {backup_path}\n"
+                        f"{cleanup_error}"
+                    )
 
             self.clear_last_snapshot()
 
             return f"Undo complete. Restored: {target_path}"
 
         except Exception as e:
-            return f"Undo failed: {e}"
+            if not target_path.exists() and backup_path.exists():
+                try:
+                    backup_path.rename(target_path)
+                except Exception:
+                    pass
+
+            if restore_temp.exists():
+                shutil.rmtree(restore_temp, ignore_errors=True)
+
+            return (
+                "Undo failed safely. The original folder was not intentionally deleted.\n\n"
+                f"Error: {e}"
+            )
 
 
     def clear_last_snapshot(self) -> None:

@@ -421,8 +421,18 @@ class PlannerAgent:
                     self._debug("RELATIVE PATH CANDIDATE", candidate)
                     return str(candidate)
 
-        # Otherwise, fall back to the latest approved directory as the active directory.
-        base_dir = Path(approved_dirs[-1])
+        active_directory = ""
+
+        if self.filesystem_guard is not None:
+            try:
+                active_directory = self.filesystem_guard.get_active_directory()
+            except AttributeError:
+                active_directory = ""
+
+        if active_directory:
+            base_dir = Path(active_directory)
+        else:
+            base_dir = Path(approved_dirs[-1])
         candidate = base_dir / path
 
         if must_exist:

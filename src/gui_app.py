@@ -4,6 +4,8 @@ import time
 import shutil
 from multiprocessing import Process, Queue
 import streamlit.components.v1 as components
+from queue import Empty
+import os
 
 import streamlit as st
 
@@ -21,8 +23,8 @@ st.set_page_config(
 )
 
 
-DEFAULT_PLANNING_MODEL = "gemma4"
-DEFAULT_REASONING_MODEL = "gpt-oss:20b"
+DEFAULT_PLANNING_MODEL = os.getenv("BABYCLAW_PLANNING_MODEL", "gemma4")
+DEFAULT_REASONING_MODEL = os.getenv("BABYCLAW_REASONING_MODEL", "gpt-oss:20b")
 
 
 CUSTOM_CSS = """
@@ -621,12 +623,10 @@ def collect_finished_task():
 
     result = None
 
-    # Important:
-    # Read from the queue even while the process is still alive.
-    # Otherwise the child process can block forever while trying to put a large trace.
     try:
-        if not result_queue.empty():
-            result = result_queue.get_nowait()
+        result = result_queue.get_nowait()
+    except Empty:
+        result = None
     except Exception as e:
         result = {
             "ok": False,
@@ -640,8 +640,26 @@ def collect_finished_task():
 
         process.join(timeout=1)
 
+        try:
+            result = result_queue.get(timeout=0.2)
+        except Empty:
+            result = None
+        except Exception as e:
+            result = {
+                "ok": False,
+                "reply": f"Error reading task result after process ended: {e}",
+                "trace": {},
+            }
+
+    if result is None:
         st.session_state.current_task = None
         st.session_state.task_result_queue = None
+
+        try:
+            result_queue.close()
+            result_queue.join_thread()
+        except Exception:
+            pass
 
         st.session_state.messages.append(
             {
@@ -661,6 +679,12 @@ def collect_finished_task():
     st.session_state.current_task = None
     st.session_state.task_result_queue = None
 
+    try:
+        result_queue.close()
+        result_queue.join_thread()
+    except Exception:
+        pass
+
     trace = result.get("trace", {})
 
     st.session_state.messages.append(
@@ -672,7 +696,7 @@ def collect_finished_task():
 
     st.session_state.last_trace = trace
     restore_snapshot_reference_from_trace(trace)
-
+    
 
 def render_header():
     planning_model, reasoning_model = get_model_labels()
@@ -718,6 +742,29 @@ def shorten_text(value, max_chars: int = 4000):
     return value[:max_chars] + "\n\n... [truncated for GUI]"
 
 
+def shrink_step_for_gui(step: dict) -> dict:
+    if not isinstance(step, dict):
+        return {}
+
+    cleaned_step = dict(step)
+
+    cleaned_step["result"] = shorten_text(
+        cleaned_step.get("result", "")
+    )
+
+    cleaned_step["resolved_input"] = shorten_text(
+        cleaned_step.get("resolved_input", ""),
+        1500,
+    )
+
+    cleaned_step["input"] = shorten_text(
+        cleaned_step.get("input", ""),
+        1500,
+    )
+
+    return cleaned_step
+
+
 def shrink_trace_for_gui(trace: dict) -> dict:
     if not isinstance(trace, dict):
         return {}
@@ -727,35 +774,53 @@ def shrink_trace_for_gui(trace: dict) -> dict:
     steps = cleaned.get("steps", [])
 
     if isinstance(steps, list):
-        cleaned_steps = []
-
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-
-            cleaned_step = dict(step)
-            cleaned_step["result"] = shorten_text(cleaned_step.get("result", ""))
-            cleaned_step["resolved_input"] = shorten_text(cleaned_step.get("resolved_input", ""), 1500)
-            cleaned_step["input"] = shorten_text(cleaned_step.get("input", ""), 1500)
-
-            cleaned_steps.append(cleaned_step)
-
-        cleaned["steps"] = cleaned_steps
+        cleaned["steps"] = [
+            shrink_step_for_gui(step)
+            for step in steps
+            if isinstance(step, dict)
+        ]
 
     execution_data = cleaned.get("execution_data", {})
 
     if isinstance(execution_data, dict):
         cleaned_execution_data = dict(execution_data)
+
         cleaned_execution_data["execution_result"] = shorten_text(
             cleaned_execution_data.get("execution_result", "")
         )
+
         cleaned_execution_data["full_execution_result"] = shorten_text(
             cleaned_execution_data.get("full_execution_result", "")
         )
+
         cleaned_execution_data["source_text"] = shorten_text(
             cleaned_execution_data.get("source_text", "")
         )
+
+        execution_steps = cleaned_execution_data.get("steps", [])
+
+        if isinstance(execution_steps, list):
+            cleaned_execution_data["steps"] = [
+                shrink_step_for_gui(step)
+                for step in execution_steps
+                if isinstance(step, dict)
+            ]
+
         cleaned["execution_data"] = cleaned_execution_data
+
+    final_step = cleaned.get("final_step")
+
+    if isinstance(final_step, dict):
+        cleaned_final_step = dict(final_step)
+        cleaned_final_step["input"] = shorten_text(
+            cleaned_final_step.get("input", ""),
+            1500,
+        )
+        cleaned_final_step["final_response"] = shorten_text(
+            cleaned_final_step.get("final_response", ""),
+            2000,
+        )
+        cleaned["final_step"] = cleaned_final_step
 
     return cleaned
 
@@ -1011,14 +1076,30 @@ def undo_last_filesystem_change() -> str:
     if not filesystem_guard.is_approved(target_path):
         return f"Undo failed: target directory is no longer approved: {target_path}"
 
-    try:
-        if target_path.exists():
-            if target_path.is_file():
-                target_path.unlink()
-            else:
-                shutil.rmtree(target_path)
+    restore_tmp = target_path.with_name(target_path.name + "_babyclaw_restore_tmp")
+    backup_tmp = target_path.with_name(target_path.name + "_babyclaw_backup_tmp")
 
-        shutil.copytree(snapshot_path, target_path)
+    try:
+        if restore_tmp.exists():
+            shutil.rmtree(restore_tmp, ignore_errors=True)
+
+        if backup_tmp.exists():
+            shutil.rmtree(backup_tmp, ignore_errors=True)
+
+        # First copy the snapshot into a temporary restore folder.
+        # If this fails, the real project is untouched.
+        shutil.copytree(snapshot_path, restore_tmp)
+
+        # Then move the current target out of the way.
+        if target_path.exists():
+            target_path.rename(backup_tmp)
+
+        # Put the restored snapshot in place.
+        restore_tmp.rename(target_path)
+
+        # Only delete the backup after the restore succeeded.
+        if backup_tmp.exists():
+            shutil.rmtree(backup_tmp, ignore_errors=True)
 
         st.session_state.last_snapshot_path = ""
         st.session_state.last_snapshot_target = ""
@@ -1026,7 +1107,14 @@ def undo_last_filesystem_change() -> str:
         return f"Undo complete. Restored: {target_path}"
 
     except Exception as e:
-        return f"Undo failed: {e}"
+        # Try to recover if the original was moved to backup but restore failed.
+        try:
+            if not target_path.exists() and backup_tmp.exists():
+                backup_tmp.rename(target_path)
+        except Exception:
+            pass
+
+        return f"Undo failed safely. Original project was not intentionally deleted. Error: {e}"
 
 def render_files_tab():
     st.subheader("Input files")

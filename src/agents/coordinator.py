@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 
 from ollama_client import OllamaClient
 import prompts
@@ -37,6 +38,13 @@ PROGRESS_ACTIONS = {
     "copy_path",
     "rename_path",
     "run_python_file",
+}
+
+CODE_MUTATING_ACTIONS = {
+    "create_file",
+    "write_file",
+    "append_file",
+    "edit_file",
 }
 
 
@@ -228,6 +236,84 @@ class CoordinatorAgent:
 
     
     # ===== Routing Helpers =====
+    def _get_approved_directories(self) -> list[str]:
+        if self.plan_executor is not None:
+            filesystem_guard = getattr(self.plan_executor, "filesystem_guard", None)
+
+            if filesystem_guard is not None:
+                try:
+                    return filesystem_guard.list_approved()
+                except AttributeError:
+                    pass
+
+        if self.planner is not None:
+            filesystem_guard = getattr(self.planner, "filesystem_guard", None)
+
+            if filesystem_guard is not None:
+                try:
+                    return filesystem_guard.list_approved()
+                except AttributeError:
+                    pass
+
+        return []
+
+
+    def _normalise_directory_match_text(self, text: str) -> str:
+        lowered = text.lower().replace("\\", "/")
+        return re.sub(r"[^a-z0-9]+", " ", lowered).strip()
+
+
+    def _detect_task_working_directory(self, prompt: str) -> str:
+        approved_dirs = self._get_approved_directories()
+
+        if not approved_dirs:
+            return ""
+
+        prompt_path_text = prompt.lower().replace("\\", "/")
+        prompt_match_text = self._normalise_directory_match_text(prompt)
+
+        matches = []
+
+        for directory in approved_dirs:
+            directory_path = Path(directory)
+            directory_name = directory_path.name
+
+            normalised_name = self._normalise_directory_match_text(directory_name)
+            normalised_full_path = str(directory_path).lower().replace("\\", "/")
+
+            full_path_mentioned = normalised_full_path in prompt_path_text
+            folder_name_mentioned = normalised_name and normalised_name in prompt_match_text
+
+            if full_path_mentioned or folder_name_mentioned:
+                matches.append(str(directory_path))
+
+        if not matches:
+            return ""
+
+        # Prefer the most specific match if multiple approved folders are mentioned.
+        matches.sort(key=len, reverse=True)
+        return matches[0]
+
+
+    def _set_task_working_directory_from_prompt(self, prompt: str) -> str:
+        task_directory = self._detect_task_working_directory(prompt)
+
+        if not task_directory:
+            return ""
+
+        if self.plan_executor is not None:
+            try:
+                self.plan_executor.set_task_working_directory(task_directory)
+                self._debug("TASK WORKING DIRECTORY", task_directory)
+            except AttributeError:
+                self._debug(
+                    "TASK WORKING DIRECTORY ERROR",
+                    "PlanExecutor does not support set_task_working_directory yet.",
+                )
+
+        return task_directory
+
+
     def _get_last_result_for_action(self, observations: list[dict], action: str, action_input: str) -> str:
         action = action.strip()
         action_input = action_input.strip()
@@ -285,7 +371,7 @@ class CoordinatorAgent:
                 count += 1
 
         return count
-
+    
 
     def _looks_like_debug_fragment(self, prompt: str) -> bool:
         lower_prompt = prompt.lower().strip()
@@ -587,6 +673,8 @@ class CoordinatorAgent:
 
         long_term_memory_context = self._get_relevant_long_term_memory(prompt)
 
+        self._set_task_working_directory_from_prompt(prompt)
+
         should_check_iterative = not (
             self._looks_like_direct_writing_task(prompt)
             or self._looks_like_directory_listing(prompt)
@@ -822,9 +910,21 @@ class CoordinatorAgent:
             "snapshot_path": snapshot_path,
             "snapshot_target": snapshot_target,
         }
+    
+    def _action_input_targets_python_file(self, action_input: str) -> bool:
+        target_path = action_input.split("::", 1)[0].strip().strip("'\"")
+
+        if not target_path:
+            return False
+
+        target_path = target_path.replace("\\", "/")
+
+        return target_path.lower().endswith((".py", ".pyw"))
 
     
     def handle_iterative(self, prompt: str, max_steps: int = 20) -> str:
+        self._set_task_working_directory_from_prompt(prompt)
+        
         observations = []
         execution_results = []
         steps_trace = []
@@ -833,7 +933,8 @@ class CoordinatorAgent:
 
         used_action_keys = set()
         viewed_files_since_last_write = set()
-        needs_test_after_write = False
+        made_successful_write = False
+        changed_since_last_run = False
 
         def shorten_for_user(text: str, max_chars: int = 1200) -> str:
             if not isinstance(text, str):
@@ -937,17 +1038,6 @@ class CoordinatorAgent:
             if status == "FINISH":
                 final_response = next_step.get("final_response", "").strip()
 
-                if needs_test_after_write:
-                    set_trace(
-                        final_step=next_step,
-                        stop_reason="Planner finished before testing changed files.",
-                    )
-
-                    return user_stop_message(
-                        "I stopped before finishing because files were changed but the project was not run yet.",
-                        "The next step should be `run_python_file` on the project entry point, such as `main.py`.",
-                    )
-
                 set_trace(final_step=next_step)
 
                 if final_response:
@@ -967,8 +1057,12 @@ class CoordinatorAgent:
 
             action_key = self._normalise_action_key(action, action_input)
 
-            # Hard loop prevention: never allow exact same action/input twice.
-            if action_key in used_action_keys:
+            # Allow rerunning the same Python entry point after code changed.
+            # This is not a loop; it is the normal debug cycle:
+            # run -> fail -> edit -> run again.
+            if action == "run_python_file" and changed_since_last_run:
+                pass
+            elif action_key in used_action_keys:
                 if action != "view_file":
                     retry_step = self.planner.create_next_step_after_repetition(
                         original_prompt=prompt,
@@ -990,9 +1084,24 @@ class CoordinatorAgent:
                         or retry_action == "NONE"
                         or retry_key in used_action_keys
                     ):
+                        if made_successful_write:
+                            set_trace(
+                                final_step=retry_step,
+                                stop_reason=(
+                                    "Planner repeated an action after a successful filesystem change, "
+                                    "so the task was treated as complete."
+                                ),
+                            )
+
+                            return "Done. The requested file changes were completed successfully."
+
+                        bad_repeated_key = retry_key if retry_key in used_action_keys else action_key
+                        bad_action = retry_action if retry_key in used_action_keys else action
+                        bad_input = retry_input if retry_key in used_action_keys else action_input
+
                         set_trace(
                             final_step=retry_step,
-                            stop_reason=f"Repeated iterative action detected: {action_key}",
+                            stop_reason=f"Repeated iterative action detected: {bad_repeated_key}",
                         )
 
                         final_response = retry_step.get("final_response", "").strip()
@@ -1001,8 +1110,8 @@ class CoordinatorAgent:
                             return final_response
 
                         return user_stop_message(
-                            "I stopped because the planner repeated the same action and could not recover with a different next step.",
-                            f"Repeated action: `{action}` with input `{action_input}`.",
+                            "I stopped because the planner repeated an action and could not recover with a valid different next step.",
+                            f"Repeated action: `{bad_action}` with input `{bad_input}`.",
                         )
 
                     action = retry_action
@@ -1088,16 +1197,18 @@ class CoordinatorAgent:
                     execution_results.append(step_result.get("result", ""))
 
                     if step_result.get("ok", False):
+                        made_successful_write = True
+                        changed_since_last_run = True
                         viewed_files_since_last_write.clear()
-                        needs_test_after_write = True
+
                         used_action_keys.add(
                             self._normalise_action_key(forced_action, forced_input)
                         )
                         continue
 
-                    if self.plan_executor.transaction_manager is not None and snapshot_result:
-                        rollback_result = self.plan_executor.transaction_manager.rollback_last_snapshot()
-                        execution_results.append(rollback_result)
+                    # Do not automatically rollback here.
+                    # Automatic rollback can be dangerous on Windows/Google Drive because restoring
+                    # a whole directory may partially delete the target if access is denied.
 
                     set_trace(
                         stop_reason="Repeated inspection fallback failed.",
@@ -1131,25 +1242,6 @@ class CoordinatorAgent:
                             "or finishing with a clear diagnosis."
                         ),
                     )
-
-            inspection_count = self._count_inspection_steps_since_last_write(observations)
-
-
-            # After enough inspection, force progress.
-            # However, allow important unseen project files to be inspected first.
-            if (
-                self._is_inspection_action(action)
-                and inspection_count >= 6
-            ):
-                set_trace(
-                    final_step=next_step,
-                    stop_reason="Too many inspection steps without a write action.",
-                )
-
-                return user_stop_message(
-                    "I stopped because the agent inspected several files/directories without making a concrete change.",
-                    "For this type of task, the next step should be `edit_file`, `create_file`, `run_python_file`, or a final diagnosis.",
-                )
 
             if normalised_view_file:
                 viewed_files_since_last_write.add(normalised_view_file)
@@ -1210,25 +1302,25 @@ class CoordinatorAgent:
             steps_trace.append(step_result)
             execution_results.append(step_result.get("result", ""))
 
-            if self._is_write_action(action):
+            if step_result.get("ok", False) and self._is_write_action(action):
+                made_successful_write = True
                 viewed_files_since_last_write.clear()
-                needs_test_after_write = True
+
+                if (
+                    action in CODE_MUTATING_ACTIONS
+                    and self._action_input_targets_python_file(action_input)
+                ):
+                    changed_since_last_run = True
 
             if action == "run_python_file":
-                needs_test_after_write = False
+                changed_since_last_run = False
 
             if not step_result.get("ok", False):
-                # Important:
-                # Running the project can fail as part of normal debugging.
-                # Do not rollback immediately and do not dump all execution results to the user.
                 if action == "run_python_file":
-                    needs_test_after_write = True
                     continue
 
-                if self.plan_executor.transaction_manager is not None and snapshot_result:
-                    rollback_result = self.plan_executor.transaction_manager.rollback_last_snapshot()
-                    execution_results.append(rollback_result)
-
+                # Do not automatically rollback here.
+                # Rollback should be manual through the GUI safety button.
                 set_trace(
                     stop_reason="Action failed.",
                     include_snapshot_top_level=True,

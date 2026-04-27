@@ -1,9 +1,13 @@
 from pathlib import Path
+import os
 
 from filesystem_guard import FilesystemGuard
 import agents
 from reasoning_settings import ReasoningSettings
 from paths import MEMORY_DB_PATH
+
+DEFAULT_PLANNING_MODEL = os.getenv("BABYCLAW_PLANNING_MODEL", "gemma4")
+DEFAULT_REASONING_MODEL = os.getenv("BABYCLAW_REASONING_MODEL", "gpt-oss:20b")
 
 
 def build_backend(reasoning_settings: ReasoningSettings, planning_model: str, reasoning_model: str, debug: bool):
@@ -116,9 +120,9 @@ def build_backend(reasoning_settings: ReasoningSettings, planning_model: str, re
 
 
 def main() -> None:
-    planning_model = "gemma4"
-    reasoning_model = "gpt-oss:20b"
-    debug = True
+    planning_model = DEFAULT_PLANNING_MODEL
+    reasoning_model = DEFAULT_REASONING_MODEL
+    debug = os.getenv("BABYCLAW_DEBUG", "true").lower() == "true"
 
     reasoning_settings = ReasoningSettings(mode="medium")
 

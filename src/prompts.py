@@ -353,6 +353,13 @@ iterative_planner_prompt = (
     "- If the user asks to move the contents of a folder into one of its subfolders, use move_directory_contents, not move_path.\n"
     "- Do not claim the project works unless run_python_file succeeded.\n\n"
 
+    "Grounding rules:"
+    "- Never invent file names, folder names, commands, classes, tests, or features."
+    "- When editing documentation, every file or folder mentioned must come from observations."
+    "- If a directory has not been listed, you may mention the directory itself, but not its internal files."
+    "- Before editing a file that describes a project structure, inspect the relevant directories first."
+    "- If enough information is not available, inspect more or finish with a clear explanation."
+
     "Run rule:\n"
     "- Do not run internal modules directly from subfolders unless they are designed as standalone scripts.\n"
     "- Prefer running the project entry point from the project root, such as main.py.\n"
