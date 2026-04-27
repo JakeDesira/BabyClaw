@@ -14,7 +14,7 @@ class MemoryWriter:
         It only decides what should be saved.
         """
         self.reasoning_settings = reasoning_settings
-        self.client = OllamaClient(model=model, supports_think=True)
+        self.client = OllamaClient(model=model)
         self.debug = debug
 
 

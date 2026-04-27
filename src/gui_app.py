@@ -5,7 +5,6 @@ import shutil
 from multiprocessing import Process, Queue
 import streamlit.components.v1 as components
 from queue import Empty
-import os
 
 import streamlit as st
 
@@ -13,7 +12,7 @@ from filesystem_guard import FilesystemGuard
 from reasoning_settings import ReasoningSettings
 import agents
 from paths import MEMORY_DB_PATH, MEDIA_INPUT_DIR
-
+from config import DEFAULT_PLANNING_MODEL, DEFAULT_REASONING_MODEL, BABYCLAW_DEBUG
 
 st.set_page_config(
     page_title="Baby Claw",
@@ -21,10 +20,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
-
-DEFAULT_PLANNING_MODEL = os.getenv("BABYCLAW_PLANNING_MODEL", "gemma4")
-DEFAULT_REASONING_MODEL = os.getenv("BABYCLAW_REASONING_MODEL", "gpt-oss:20b")
 
 
 CUSTOM_CSS = """
@@ -272,7 +267,7 @@ CUSTOM_CSS = """
 
 
 def build_backend(reasoning_mode: str):
-    debug = False
+    debug = BABYCLAW_DEBUG
 
     reasoning_settings = ReasoningSettings(mode=reasoning_mode)
 

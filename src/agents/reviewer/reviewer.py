@@ -7,7 +7,7 @@ import prompts
 class ReviewerAgent:
     def __init__(self, model: str | None = None, reasoning_settings=None, debug: bool = True):
         self.reasoning_settings = reasoning_settings
-        self.client = OllamaClient(model=model, supports_think=True)
+        self.client = OllamaClient(model=model)
         self.debug = debug
 
 

@@ -1,3 +1,4 @@
 streollama
 pypdf
 streamlit
+dotenv

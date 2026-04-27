@@ -17,7 +17,7 @@ class MemoryRouter:
         - what query should be used?
         """
         self.reasoning_settings = reasoning_settings
-        self.client = OllamaClient(model=model, supports_think=True)
+        self.client = OllamaClient(model=model)
         self.debug = debug
 
 

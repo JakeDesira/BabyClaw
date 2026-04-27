@@ -9,7 +9,7 @@ class ResponseGenerator:
         self.memory = memory
         self.reasoning_settings = reasoning_settings
         self.debug = debug
-        self.reasoning_client = OllamaClient(model=reasoning_model, supports_think=True)
+        self.reasoning_client = OllamaClient(model=reasoning_model)
 
 
     def _debug(self, label: str, value) -> None:

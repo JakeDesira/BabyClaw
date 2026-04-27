@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from ollama import Client
+from config import OLLAMA_SUPPORTS_THINK
 
 
 @dataclass
@@ -12,21 +13,12 @@ class LLMResponse:
 
 class OllamaClient:
     def __init__(self, model: str | None = None, supports_think: bool | None = None):
-        """
-        Wrapper for communicating with a local or remote Ollama instance.
-
-        By default, thinking is disabled for compatibility with models that do
-        not support Ollama's think parameter.
-
-        Users can enable thinking with:
-            OLLAMA_SUPPORTS_THINK=true
-        """
         self.host = os.getenv("OLLAMA_HOST_URL", "http://localhost:11434")
         self.model = model or os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
         self.client = Client(host=self.host)
 
         if supports_think is None:
-            self.supports_think = os.getenv("OLLAMA_SUPPORTS_THINK", "false").lower() == "true"
+            self.supports_think = OLLAMA_SUPPORTS_THINK
         else:
             self.supports_think = supports_think
 
@@ -62,13 +54,13 @@ class OllamaClient:
         if options:
             request_args["options"] = options
 
-        if think is not None and self.supports_think:
+        if self.supports_think and think is not None:
             request_args["think"] = think
 
         return request_args
 
 
-    def ask(self,prompt: str, system_prompt: str | None = None, temperature: float | None = None, think: str | bool | None = None,) -> LLMResponse:
+    def ask(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None, think: str | bool | None = None) -> LLMResponse:
         request_args = self._build_request_args(
             prompt=prompt,
             system_prompt=system_prompt,
@@ -79,7 +71,11 @@ class OllamaClient:
         try:
             response = self.client.chat(**request_args)
             content = response["message"]["content"]
-            return LLMResponse(ok=True, content=content)
+
+            return LLMResponse(
+                ok=True,
+                content=content,
+            )
 
         except Exception as e:
             return LLMResponse(

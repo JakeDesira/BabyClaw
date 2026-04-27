@@ -48,7 +48,7 @@ class PlannerAgent:
         self.debug = debug
         self.filesystem_guard = filesystem_guard
         self.reasoning_settings = reasoning_settings
-        self.planning_client = OllamaClient(model=planning_model, supports_think=True)
+        self.planning_client = OllamaClient(model=planning_model)
 
     def _debug(self, label: str, value) -> None:
         if self.debug:
