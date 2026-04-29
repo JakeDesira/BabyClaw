@@ -1,220 +1,131 @@
 # Baby Claw
 
-Baby Claw is a lightweight local multi-agent AI assistant built in Python and designed to run through Ollama. It was developed as part of a university assignment with the goal of creating a clear and minimal architecture rather than a feature-heavy system.
+Baby Claw is a local Python/Ollama multi-agent assistant with both a terminal mode and a Streamlit GUI. The current version focuses on clearer agent separation, safe file execution, visible GUI tracing, and memory/context handling.
 
-The system is based on a small set of cooperating agents with clearly separated responsibilities:
+## Current Features
 
-* **Coordinator Agent** – receives the user prompt, decides whether the request is simple or requires planning, and returns the final response
-* **Planner Agent** – breaks complex requests into subtasks and decides whether memory or execution is required
-* **Memory Agent** – manages short-term and long-term memory
-* **Executor Agent** – performs approved actions such as file operations or safe commands
-* **Reviewer Agent** – checks the final result for correctness and coherence
+- Terminal and Streamlit GUI entry points.
+- Short-term chat context and SQLite-backed long-term memory.
+- Allows to manually view and delete current saved memories
+- Choose a workspace anywhere on device
+- Safety snapshots with GUI undo support.
+- Live execution trace shown in the GUI for planner/executor runs.
+- File upload support through `media_input/`.
+- Python syntax verification before generated Python code is written.
 
-The language model is run locally through **Ollama**, using a model selected for a balance between reasoning quality and practical speed.
+### All available tools:
 
----
+- get_current_time -> get the current time.
+- list_input_files -> list uploaded/input files from media_input.
+- read_file -> read a file from media_input only. Use for uploaded or attached files.
+- read_multiple_files -> read multiple uploaded/input files.
+- list_directory -> list files/folders inside an approved workspace directory.
+- view_file -> read a file from an approved workspace directory.
+- find_file -> search for a file inside approved workspace directories.
+- run_python_file -> run a Python file inside an approved workspace directory.
+- create_file -> create a new file. 
+- write_file -> overwrite an existing file.
+- append_file -> append content to an existing file.
+- edit_file -> modify an existing file in place.
+- delete_file -> delete a file.
+- delete_directory -> delete a directory and its contents.
+- create_directory -> create a directory.
+- move_path -> move a file or directory. 
+- move_directory_contents -> move the contents inside one directory into another directory.
+- copy_path -> copy a file or directory.
+- rename_path -> rename a file or directory in place. 
 
-## Project Goal
+- get_first_user_prompt -> retrieve the first user prompt from short-term memory.
+- get_last_user_prompt -> retrieve the most recent user prompt.
+- get_short_term_context -> retrieve recent conversation context.
+- get_last_active_file_name -> retrieve the active file name.
+- get_last_active_file_content -> retrieve the active file content.
+- get_previous_active_file_content -> retrieve the previous active file content.
+- search_long_term_memory -> search saved long-term memory.
+- list_recent_long_term_memories -> list recent saved memories. 
+- delete_long_term_memory -> delete a saved memory by numeric ID.
+- save_accessible_path -> save an approved accessible path.
+- list_accessible_paths -> list saved accessible paths.
+- revoke_accessible_path -> remove a saved accessible path. 
 
-The purpose of Baby Claw is to improve on existing agent systems by keeping the architecture:
 
-* local-first
-* easier to understand
-* safer in terms of execution
-* more modular through explicit agent roles
-
-Instead of placing planning, memory, execution, and review inside one large loop, Baby Claw separates them into specialised components.
-
----
-
-## Current Development Setup
-
-During development, I used two different ways of running the model:
-
-### 1. Standard local setup
-
-The default and intended setup is that the Python code and Ollama both run on the **same machine**. In this case, the Ollama client connects to:
-
-```text
-http://localhost:11434
-```
-
-This is the setup that other users, are expected to use.
-
-### 2. Optional remote development setup
-
-For convenience, I also added optional support for running the Python client on my **Mac** while using the model hosted on my **desktop PC**. This was done mainly for personal development and testing, since my desktop machine has stronger hardware for local inference.
-
-This remote setup uses:
-
-* **Tailscale** for private connectivity between devices
-* an environment variable to point the Mac client to the PC-hosted Ollama instance
-
-This remote option is not required to run the project. The system still works normally on a single local machine.
-
----
-
-## Ollama Setup
-
-First, Ollama was installed on the machine hosting the model.
-
-A local model was then downloaded and tested through Ollama. The project was designed to support lightweight local models, and several models were tested during development in order to find a good balance between reasoning quality and speed.
-
-The Python side communicates with Ollama through a small wrapper class in `ollama_client.py`.
-
-By default, the client connects to:
-
-```text
-http://localhost:11434
-```
-
-This means that if Ollama is running locally on the same machine, no additional setup is required.
-
----
-
-## Host Configuration
-
-The Ollama host is configurable through an environment variable.
-
-The client code uses:
-
-```python
-host = os.getenv("OLLAMA_HOST_URL", "http://localhost:11434")
-```
-
-This means:
-
-* if no environment variable is set, the project uses **localhost**
-* if `OLLAMA_HOST_URL` is set, the project uses that address instead
-
-This was done so that:
-
-* a normal local user can run the project without editing the code
-* I can optionally point the client on my Mac to the Ollama instance running on my PC
-
-### Why this approach was chosen
-
-Because my project files are synced through Google Drive, using a machine-specific `.env` file inside the project folder would have caused conflicts between the Mac and the PC. For that reason, I used a shell-level environment variable on the Mac instead of relying on a synced `.env` file.
-
----
-
-## macOS Shell Configuration
-
-On my Mac, I configured the environment variable in `~/.zshrc` so that the project would automatically connect to the PC-hosted Ollama instance.
-
-The line added was:
-
-```bash
-export OLLAMA_HOST_URL="http://<tailscale-ip>:11434"
-```
-
-This allows the same codebase to behave differently depending on the machine:
-
-* on the **PC**, the system uses `localhost`
-* on the **Mac**, the system uses the Tailscale address of the PC
-
-This setup is private to my own machines and is not required for others using the repository.
-
----
-
-## Security Note
-
-The public repository does **not** include my private Tailscale address.
-
-The project is written so that remote connectivity is optional and configurable outside the code. This keeps the repository cleaner and avoids exposing personal network details.
-
-Anyone using the repository normally should run the system locally with:
-
-```text
-http://localhost:11434
-```
-
----
-
-## Project Structure
+## Directory Decomposition
 
 ```text
 src/
-├── agents/
-│   ├── __init__.py
-│   ├── coordinator.py
-│   ├── executor/
-│   ├── memory/
-│   ├── planner/
-│   └── reviewer/
-├── action_constants.py
-├── backend_factory.py
-├── config.py
-├── filesystem_guard.py
-├── gui_app.py
-├── main.py
-├── paths.py
-├── prompts.py
-├── reasoning_settings.py
-└── ollama_client.py
+├── action_constants.py        # shared action names and action groups
+├── backend_factory.py         # builds and wires the backend agents
+├── config.py                  # model and runtime defaults
+├── filesystem_guard.py        # approved workspace path checks
+├── gui_app.py                 # Streamlit GUI, chat state, task process handling
+├── main.py                    # terminal entry point
+├── ollama_client.py           # Ollama chat wrapper
+├── paths.py                   # shared project paths
+├── prompts.py                 # system prompts for routing, planning, memory, review
+├── reasoning_settings.py      # reasoning mode and iteration settings
+├── assets/
+│   ├── gui.css                # GUI styling
+│   ├── gui.js                 # GUI browser-side helpers
+│   └── header.html            # GUI header markup
+└── agents/
+    ├── __init__.py            # agent package exports
+    ├── coordinator.py         # top-level router and workflow controller
+    ├── executor/
+    │   ├── __init__.py
+    │   ├── executor.py        # dispatches low-level actions
+    │   └── tools/
+    │       ├── __init__.py
+    │       ├── datetime_tools.py
+    │       ├── directory_tools.py
+    │       ├── file_tools.py
+    │       └── transaction_manager.py
+    ├── memory/
+    │   ├── __init__.py
+    │   ├── memory.py          # short-term context and active file state
+    │   ├── memory_router.py   # decides when stored memory is needed
+    │   ├── memory_store.py    # SQLite persistence layer
+    │   └── memory_writer.py   # extracts durable memory candidates
+    ├── planner/
+    │   ├── __init__.py
+    │   ├── plan_executor.py   # resolves paths and executes planner actions
+    │   ├── planner.py         # converts requests into actions
+    │   └── response_generator.py
+    └── reviewer/
+        ├── __init__.py
+        ├── reviewer.py        # final answer review
+        └── execution_verifier.py
 ```
 
-### Main files
+## Runtime Flow
 
-* `main.py` – terminal entry point of the system
-* `gui_app.py` – Streamlit interface
-* `backend_factory.py` – shared backend construction used by both entry points
-* `ollama_client.py` – wrapper for communication with Ollama
-* `agents/memory/memory_store.py` – memory storage logic
-* `agents/coordinator.py` – Coordinator Agent
-* `agents/planner/` – Planner Agent and plan execution logic
-* `agents/memory/` – Memory Agent, router, writer, and SQLite store
-* `agents/executor/` – Executor Agent and filesystem tools
-* `agents/reviewer/` – Reviewer Agent and execution verification
+1. `main.py` or `gui_app.py` sends the user prompt to the `CoordinatorAgent`.
+2. The coordinator stores short-term context and decides whether the request is simple or needs the planning pipeline.
+3. Simple prompts are answered directly with recent context.
+4. Complex prompts go through the Planner, PlanExecutor, Executor, and Reviewer.
+5. File actions are restricted by `filesystem_guard.py` and verified after execution.
+6. The GUI runs agent work in a child process and passes recent chat messages into that process to preserve follow-up context.
+7. For filesystem changes, snapshots are recorded so the GUI can undo the latest change set.
 
----
+## Running
 
-## How the System Works
+Install dependencies:
 
-1. The user enters a prompt through the terminal.
-2. The **Coordinator Agent** receives the request.
-3. If the request is simple, the Coordinator answers it directly through the model.
-4. If the request is complex, it is sent to the **Planner Agent**.
-5. The Planner decides whether memory retrieval or execution is required.
-6. The **Memory Agent** provides relevant stored context if needed.
-7. The **Executor Agent** performs approved actions if needed.
-8. The **Reviewer Agent** checks the assembled result.
-9. The Coordinator returns the final response to the user.
+```bash
+pip install -r requirements.txt
+```
 
----
-
-## Running the Project
-
-### Standard local usage
-
-Make sure Ollama is installed and running locally, then run:
+Run Ollama locally, then start either mode:
 
 ```bash
 python src/main.py
 ```
 
-### Optional remote usage
+```bash
+streamlit run src/gui_app.py
+```
 
-If you want to use a remote Ollama instance, configure `OLLAMA_HOST_URL` before running the project.
-
-Example:
+Optional remote Ollama host:
 
 ```bash
 export OLLAMA_HOST_URL="http://<remote-host>:11434"
-python src/main.py
 ```
-
----
-
-## Development Notes
-
-During development, several local models were tested in order to evaluate:
-
-* response speed
-* reasoning quality
-* planning quality
-* practical usability for a multi-agent workflow
-
-The final implementation was guided not only by model quality, but also by development practicality. Since Baby Claw may make multiple model calls during a single request, inference speed was an important factor in deciding which model to use during implementation.
-
----
