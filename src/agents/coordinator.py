@@ -1316,6 +1316,7 @@ class CoordinatorAgent:
 
         used_action_keys = set()
         viewed_files_since_last_write = set()
+        created_file_targets = set()
         made_successful_write = False
         changed_since_last_run = False
         completion_check_failures = 0
@@ -1344,6 +1345,40 @@ class CoordinatorAgent:
             message += "\n\nCheck Debug / Internals for the full execution trace."
 
             return message
+
+        def normalised_action_target(action_input: str) -> str:
+            """Return a stable absolute target path for file actions."""
+            target_text = action_input.split("::", 1)[0].strip().strip("'\"")
+
+            if not target_text:
+                return ""
+
+            try:
+                resolved = self.plan_executor._resolve_relative_path(target_text)
+            except Exception:
+                resolved = target_text
+
+            try:
+                return str(Path(resolved).expanduser().resolve())
+            except Exception:
+                return resolved
+
+        def observation_result_for(action: str, step_result: dict) -> str:
+            """Make tool observations explicit enough for the next planner step."""
+            result_text = step_result.get("result", "")
+
+            if (
+                action == "create_file"
+                and step_result.get("ok", False)
+                and result_text.startswith("File created:")
+            ):
+                return (
+                    f"{result_text}\n"
+                    "The file was created and populated with generated content. "
+                    "Do not call write_file for this same path unless fixing a verified problem."
+                )
+
+            return result_text
 
         def snapshot_metadata() -> dict:
             """Return current iterative snapshot metadata."""
@@ -1515,6 +1550,41 @@ class CoordinatorAgent:
                     "I could not decide the next action."
                 )
 
+            action_target = normalised_action_target(action_input)
+
+            if action == "write_file" and action_target in created_file_targets:
+                skip_message = (
+                    "Skipped redundant write_file for a file that was already created "
+                    f"and populated in this run: {action_target}"
+                )
+                step_data = {
+                    "ok": True,
+                    "action": action,
+                    "input": action_input,
+                    "resolved_input": action_input,
+                    "result": skip_message,
+                    "verification": {
+                        "ok": True,
+                        "feedback": skip_message,
+                    },
+                }
+
+                observations.append(
+                    {
+                        "action": action,
+                        "input": action_input,
+                        "result": (
+                            f"{skip_message}\n"
+                            "Use run_python_file, create the next missing file, or FINISH."
+                        ),
+                    }
+                )
+                steps_trace.append(step_data)
+                execution_results.append(skip_message)
+                used_action_keys.add(self._normalise_action_key(action, action_input))
+                set_trace()
+                continue
+
             action_key = self._normalise_action_key(action, action_input)
 
             # Allow rerunning the same Python entry point after code changed.
@@ -1664,7 +1734,7 @@ class CoordinatorAgent:
                         {
                             "action": forced_action,
                             "input": forced_input,
-                            "result": step_result.get("result", ""),
+                            "result": observation_result_for(forced_action, step_result),
                         }
                     )
 
@@ -1681,6 +1751,12 @@ class CoordinatorAgent:
                         made_successful_write = True
                         changed_since_last_run = True
                         viewed_files_since_last_write.clear()
+
+                        if forced_action == "create_file":
+                            created_target = normalised_action_target(forced_input)
+
+                            if created_target:
+                                created_file_targets.add(created_target)
 
                         used_action_keys.add(
                             self._normalise_action_key(forced_action, forced_input)
@@ -1776,7 +1852,7 @@ class CoordinatorAgent:
                 {
                     "action": action,
                     "input": action_input,
-                    "result": step_result.get("result", ""),
+                    "result": observation_result_for(action, step_result),
                 }
             )
 
@@ -1788,6 +1864,12 @@ class CoordinatorAgent:
             if step_result.get("ok", False) and self._is_write_action(action):
                 made_successful_write = True
                 viewed_files_since_last_write.clear()
+
+                if action == "create_file":
+                    created_target = normalised_action_target(action_input)
+
+                    if created_target:
+                        created_file_targets.add(created_target)
 
                 if (
                     action in CODE_MUTATING_ACTIONS

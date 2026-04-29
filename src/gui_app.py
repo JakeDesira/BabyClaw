@@ -128,6 +128,7 @@ def run_agent_task(
     task_id: int,
     approved_dirs: list[str],
     active_directory: str,
+    recent_messages: list[dict],
     result_queue: Queue,
 ):
     """Run agent task."""
@@ -142,6 +143,19 @@ def run_agent_task(
 
         print("CHILD APPROVED DIRS:", backend["filesystem_guard"].list_approved())
         print("CHILD ACTIVE DIR:", backend["filesystem_guard"].get_active_directory())
+
+        memory = backend.get("memory")
+
+        if memory is not None:
+            for message in recent_messages:
+                role = str(message.get("role", "")).strip()
+                content = str(message.get("content", "")).strip()
+
+                if role in {"user", "assistant"} and content:
+                    try:
+                        memory.save_short_term(role=role, content=content)
+                    except AttributeError:
+                        break
 
         coordinator = backend["coordinator"]
 
@@ -575,6 +589,13 @@ def start_agent_task(prompt: str):
 
     approved_dirs = filesystem_guard.list_approved()
     active_directory = filesystem_guard.get_active_directory()
+    recent_messages = [
+        {
+            "role": message.get("role", ""),
+            "content": message.get("content", ""),
+        }
+        for message in st.session_state.messages[-10:]
+    ]
 
     if active_directory:
         snapshot_result = transaction_manager.snapshot_directory(active_directory)
@@ -604,6 +625,7 @@ def start_agent_task(prompt: str):
             task_id,
             approved_dirs,
             active_directory,
+            recent_messages,
             result_queue,
         ),
     )

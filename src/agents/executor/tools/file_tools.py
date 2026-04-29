@@ -83,6 +83,19 @@ def _split_action_pair(action_input: str, action_name: str) -> tuple[str, str] |
     return left, right
 
 
+def _validate_python_content_before_write(path: Path, content: str) -> str | None:
+    """Return an error if Python content is syntactically invalid."""
+    if path.suffix.lower() != ".py":
+        return None
+
+    try:
+        compile(content, str(path), "exec")
+    except SyntaxError as e:
+        return f"Error: Python syntax verification failed for {path}: {e}"
+
+    return None
+
+
 def find_file_in_input(filename: str) -> Path | None:
     """
     Find a file in the input directory using:
@@ -323,6 +336,11 @@ def create_guarded_file(action_input: str, filesystem_guard) -> str:
     if safe.exists():
         return f"Error: File already exists: {safe}"
 
+    syntax_error = _validate_python_content_before_write(safe, content)
+
+    if syntax_error is not None:
+        return syntax_error
+
     try:
         safe.parent.mkdir(parents=True, exist_ok=True)
         safe.write_text(content, encoding="utf-8")
@@ -358,6 +376,12 @@ def append_guarded_file(action_input: str, filesystem_guard) -> str:
         return f"Error: Path is not a file: {safe}"
 
     try:
+        new_content = safe.read_text(encoding="utf-8") + content
+        syntax_error = _validate_python_content_before_write(safe, new_content)
+
+        if syntax_error is not None:
+            return syntax_error
+
         with safe.open("a", encoding="utf-8") as file:
             file.write(content)
 
@@ -447,6 +471,11 @@ def write_guarded_file(action_input: str, filesystem_guard=None) -> str:
 
     if not safe_path.is_file():
         return f"Error: Path is not a file: {safe_path}"
+
+    syntax_error = _validate_python_content_before_write(safe_path, content)
+
+    if syntax_error is not None:
+        return syntax_error
 
     try:
         safe_path.write_text(content, encoding="utf-8")

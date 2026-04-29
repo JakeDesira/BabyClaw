@@ -1,4 +1,5 @@
 from pathlib import Path
+import codecs
 import re
 import json
 
@@ -178,7 +179,76 @@ class PlannerAgent:
             raise ValueError("No JSON object found in planner response.")
 
         return cleaned[start:end + 1]
-    
+
+
+    def _load_planner_json(self, text: str) -> dict:
+        """Load planner JSON, tolerating raw newlines inside JSON strings."""
+        json_text = self._extract_json(text)
+
+        try:
+            return json.loads(json_text)
+        except json.JSONDecodeError as strict_error:
+            try:
+                return json.loads(json_text, strict=False)
+            except json.JSONDecodeError:
+                raise strict_error
+
+
+    def _decode_loose_json_string(self, value: str) -> str:
+        """Decode common JSON string escapes without requiring valid JSON."""
+        try:
+            return json.loads(f'"{value}"', strict=False)
+        except Exception:
+            try:
+                return codecs.decode(value, "unicode_escape")
+            except Exception:
+                return value
+
+
+    def _extract_loose_json_field(self, text: str, field_name: str) -> str:
+        """Extract a JSON string field from a malformed planner object."""
+        field_pattern = rf'"{re.escape(field_name)}"\s*:\s*"'
+        match = re.search(field_pattern, text)
+
+        if match is None:
+            return ""
+
+        start = match.end()
+        next_field = re.search(r'"\s*,\s*"[a-zA-Z_][a-zA-Z0-9_]*"\s*:', text[start:], re.DOTALL)
+
+        if next_field is not None:
+            raw_value = text[start:start + next_field.start()]
+        else:
+            raw_value = text[start:]
+            end_quote = raw_value.rfind('"')
+
+            if end_quote != -1:
+                raw_value = raw_value[:end_quote]
+
+        return self._decode_loose_json_string(raw_value)
+
+
+    def _recover_next_step_from_malformed_json(self, text: str) -> dict | None:
+        """Recover an iterative next-step object from malformed planner JSON."""
+        try:
+            json_text = self._extract_json(text)
+        except Exception:
+            return None
+
+        action = self._extract_loose_json_field(json_text, "action")
+        status = self._extract_loose_json_field(json_text, "status")
+
+        if not action or not status:
+            return None
+
+        return {
+            "thought_summary": self._extract_loose_json_field(json_text, "thought_summary"),
+            "status": status,
+            "action": action,
+            "input": self._extract_loose_json_field(json_text, "input"),
+            "final_response": self._extract_loose_json_field(json_text, "final_response"),
+        }
+
 
     def _fallback_plan(self, error_message: str) -> dict:
         """Build a safe fallback plan after planner failure."""
@@ -199,8 +269,7 @@ class PlannerAgent:
     def _parse_plan(self, raw_plan: str) -> dict:
         """Parse plan."""
         try:
-            json_text = self._extract_json(raw_plan)
-            plan = json.loads(json_text)
+            plan = self._load_planner_json(raw_plan)
         except Exception as e:
             self._debug("JSON PARSE ERROR", e)
             self._debug("RAW INVALID PLAN", raw_plan)
@@ -294,6 +363,15 @@ class PlannerAgent:
         if status == "FINISH":
             action = "NONE"
             action_input = ""
+
+        if action == "write_file":
+            filepath = action_input.split("::", 1)[0].strip().strip("'\"")
+
+            if filepath:
+                resolved = self._resolve_relative_path(filepath)
+
+                if not Path(resolved).exists():
+                    action = "create_file"
 
         return {
             "thought_summary": str(step.get("thought_summary", "")),
@@ -831,9 +909,13 @@ class PlannerAgent:
             }
 
         try:
-            json_text = self._extract_json(response.content)
-            step = json.loads(json_text)
+            step = self._load_planner_json(response.content)
         except Exception as e:
+            recovered_step = self._recover_next_step_from_malformed_json(response.content)
+
+            if recovered_step is not None:
+                return self._validate_next_step(recovered_step)
+
             return {
                 "thought_summary": f"Planner returned invalid JSON after repetition: {e}",
                 "status": "FINISH",
@@ -940,10 +1022,13 @@ class PlannerAgent:
             }
 
         try:
-            json_text = self._extract_json(response.content)
-            step = json.loads(json_text)
+            step = self._load_planner_json(response.content)
         except Exception as e:
             self._debug("RAW INVALID ITERATIVE PLAN", response.content)
+            recovered_step = self._recover_next_step_from_malformed_json(response.content)
+
+            if recovered_step is not None:
+                return self._validate_next_step(recovered_step)
 
             if not observations:
                 return {
