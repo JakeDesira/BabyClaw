@@ -15,6 +15,8 @@ Baby Claw is a local Python/Ollama multi-agent assistant with both a terminal mo
 
 ### All available tools:
 
+Executor actions:
+
 - get_current_time -> get the current time.
 - list_input_files -> list uploaded/input files from media_input.
 - read_file -> read a file from media_input only. Use for uploaded or attached files.
@@ -34,6 +36,8 @@ Baby Claw is a local Python/Ollama multi-agent assistant with both a terminal mo
 - move_directory_contents -> move the contents inside one directory into another directory.
 - copy_path -> copy a file or directory.
 - rename_path -> rename a file or directory in place. 
+
+Memory actions:
 
 - get_first_user_prompt -> retrieve the first user prompt from short-term memory.
 - get_last_user_prompt -> retrieve the most recent user prompt.
@@ -129,3 +133,10 @@ Optional remote Ollama host:
 ```bash
 export OLLAMA_HOST_URL="http://<remote-host>:11434"
 ```
+
+Note:
+Model configuration is handled in `src/config.py`. The default Ollama model names are read from these environment variables:
+
+- `BABYCLAW_PLANNING_MODEL` -> planner model, defaults to `gemma4`
+- `BABYCLAW_REASONING_MODEL` -> reasoning/reviewer model, defaults to `gpt-oss:20b`
+
