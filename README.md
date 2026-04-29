@@ -112,20 +112,53 @@ src/
 
 ## Running
 
-Install dependencies:
+Install the Python dependencies:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-Run Ollama locally, then start either mode:
+Start Ollama locally before running BabyClaw. The models used by the app are configured in `src/config.py`:
+
+- `BABYCLAW_PLANNING_MODEL` -> planner model, defaults to `gemma4`
+- `BABYCLAW_REASONING_MODEL` -> reasoning/reviewer model, defaults to `gpt-oss:20b`
+
+You can change those defaults by editing `src/config.py`, setting environment variables, or adding a `.env` file at the project root:
+
+```bash
+BABYCLAW_PLANNING_MODEL=gemma4
+BABYCLAW_REASONING_MODEL=gpt-oss:20b
+```
+
+Make sure the configured Ollama models are installed:
+
+```bash
+ollama pull <planning-model>
+ollama pull <reasoning-model>
+```
+
+Run the terminal app:
 
 ```bash
 python src/main.py
 ```
 
+Run the Streamlit GUI:
+
 ```bash
 streamlit run src/gui_app.py
+```
+
+You can also use the launcher script to start the GUI and open it in your browser automatically:
+
+```bash
+python babyclaw_launcher.py
+```
+
+The launcher uses Streamlit on port `8501`. If that port is busy, run Streamlit directly with another port:
+
+```bash
+streamlit run src/gui_app.py --server.port=8502
 ```
 
 Optional remote Ollama host:
@@ -133,10 +166,3 @@ Optional remote Ollama host:
 ```bash
 export OLLAMA_HOST_URL="http://<remote-host>:11434"
 ```
-
-Note:
-Model configuration is handled in `src/config.py`. The default Ollama model names are read from these environment variables:
-
-- `BABYCLAW_PLANNING_MODEL` -> planner model, defaults to `gemma4`
-- `BABYCLAW_REASONING_MODEL` -> reasoning/reviewer model, defaults to `gpt-oss:20b`
-
