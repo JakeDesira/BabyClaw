@@ -1,4 +1,4 @@
 ollama
 pypdf
 streamlit
-dotenv
+python-dotenv

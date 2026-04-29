@@ -138,25 +138,34 @@ src/
 ├── agents/
 │   ├── __init__.py
 │   ├── coordinator.py
-│   ├── planner.py
-│   ├── memory.py
-│   ├── executor.py
-│   └── reviewer.py
+│   ├── executor/
+│   ├── memory/
+│   ├── planner/
+│   └── reviewer/
+├── action_constants.py
+├── backend_factory.py
+├── config.py
+├── filesystem_guard.py
+├── gui_app.py
 ├── main.py
-├── memory_store.py
+├── paths.py
+├── prompts.py
+├── reasoning_settings.py
 └── ollama_client.py
 ```
 
 ### Main files
 
-* `main.py` – entry point of the system
+* `main.py` – terminal entry point of the system
+* `gui_app.py` – Streamlit interface
+* `backend_factory.py` – shared backend construction used by both entry points
 * `ollama_client.py` – wrapper for communication with Ollama
-* `memory_store.py` – memory storage logic
+* `agents/memory/memory_store.py` – memory storage logic
 * `agents/coordinator.py` – Coordinator Agent
-* `agents/planner.py` – Planner Agent
-* `agents/memory.py` – Memory Agent
-* `agents/executor.py` – Executor Agent
-* `agents/reviewer.py` – Reviewer Agent
+* `agents/planner/` – Planner Agent and plan execution logic
+* `agents/memory/` – Memory Agent, router, writer, and SQLite store
+* `agents/executor/` – Executor Agent and filesystem tools
+* `agents/reviewer/` – Reviewer Agent and execution verification
 
 ---
 

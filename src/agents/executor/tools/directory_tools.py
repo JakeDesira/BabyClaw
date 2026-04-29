@@ -3,6 +3,7 @@ import shutil
 
 
 def list_directory(path: str | Path, filesystem_guard) -> str:
+    """List directory."""
     safe = filesystem_guard.safe_path(path)
 
     if safe is None:
@@ -23,6 +24,7 @@ def list_directory(path: str | Path, filesystem_guard) -> str:
 
 
 def create_directory(path: str | Path, filesystem_guard) -> str:
+    """Create directory."""
     safe = filesystem_guard.safe_path(path)
 
     if safe is None:
@@ -35,7 +37,36 @@ def create_directory(path: str | Path, filesystem_guard) -> str:
         return f"Error creating directory: {e}"
 
 
+def delete_directory(path: str | Path, filesystem_guard) -> str:
+    """Delete an approved directory and its contents."""
+    safe = filesystem_guard.safe_path(path)
+
+    if safe is None:
+        return f"Access denied. '{path}' is not within an approved directory."
+
+    if not safe.exists():
+        return f"Directory not found: {path}"
+
+    if not safe.is_dir():
+        return f"Error: '{path}' is not a directory."
+
+    try:
+        approved_root = filesystem_guard.get_approved_root_for_path(safe)
+    except AttributeError:
+        approved_root = None
+
+    if approved_root is not None and safe.resolve() == approved_root.resolve():
+        return f"Error: Refusing to delete approved root directory: {safe}"
+
+    try:
+        shutil.rmtree(safe)
+        return f"Directory deleted: {safe}"
+    except Exception as e:
+        return f"Error deleting directory: {e}"
+
+
 def move_path(action_input: str, filesystem_guard) -> str:
+    """Move path."""
     parts = action_input.split("::", 1)
 
     if len(parts) != 2:
@@ -65,6 +96,7 @@ def move_path(action_input: str, filesystem_guard) -> str:
 
 
 def rename_path(action_input: str, filesystem_guard) -> str:
+    """Rename path."""
     parts = action_input.split("::", 1)
 
     if len(parts) != 2:
@@ -101,6 +133,7 @@ def rename_path(action_input: str, filesystem_guard) -> str:
     
 
 def copy_path(action_input: str, filesystem_guard) -> str:
+    """Copy path."""
     parts = action_input.split("::", 1)
 
     if len(parts) != 2:
@@ -133,12 +166,8 @@ def copy_path(action_input: str, filesystem_guard) -> str:
         return f"Copied: {source} -> {destination}"
     except Exception as e:
         return f"Error copying path: {e}"
-    
-from pathlib import Path
-import shutil
-
-
 def move_directory_contents(action_input: str, filesystem_guard) -> str:
+    """Move directory contents."""
     parts = action_input.split("::", 1)
 
     if len(parts) != 2:

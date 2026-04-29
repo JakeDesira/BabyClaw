@@ -5,18 +5,22 @@ import prompts
 
 
 class ReviewerAgent:
+    """Review generated responses for task completion."""
     def __init__(self, model: str | None = None, reasoning_settings=None, debug: bool = True):
+        """Initialise the instance."""
         self.reasoning_settings = reasoning_settings
         self.client = OllamaClient(model=model)
         self.debug = debug
 
 
     def _debug(self, label: str, value) -> None:
+        """Print a debug message when debug logging is enabled."""
         if self.debug:
             print(f"[REVIEWER DEBUG] {label}: {value}")
 
     
     def _rule_based_review(self, original_prompt: str, draft_result: str) -> dict | None:
+        """Return a deterministic review result when simple rules apply."""
         lower_prompt = original_prompt.lower()
         lower_result = draft_result.lower()
 
@@ -42,6 +46,7 @@ class ReviewerAgent:
             "file created:",
             "file updated:",
             "file deleted:",
+            "directory deleted:",
             "directory created:",
             "moved:",
             "copied:",
@@ -49,6 +54,7 @@ class ReviewerAgent:
             "verified created file:",
             "verified written file:",
             "verified deleted file:",
+            "verified deleted directory:",
             "verified created directory:",
             "verified move:",
             "verified copy:",
@@ -81,6 +87,7 @@ class ReviewerAgent:
     
 
     def review(self, original_prompt: str, draft_result: str) -> dict:
+        """Review a draft result for completion and correctness."""
         rule_based_result = self._rule_based_review(original_prompt, draft_result)
 
         if rule_based_result is not None:
@@ -113,6 +120,7 @@ class ReviewerAgent:
     
 
     def _parse_review(self, raw_review: str) -> dict:
+        """Parse review."""
         cleaned = re.sub(r"<think>.*?</think>", "", raw_review, flags=re.DOTALL).strip()
 
         result = {

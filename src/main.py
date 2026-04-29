@@ -1,122 +1,32 @@
 from pathlib import Path
-import os
 
-from filesystem_guard import FilesystemGuard
-import agents
+from backend_factory import build_backend
 from reasoning_settings import ReasoningSettings
-from paths import MEMORY_DB_PATH
 from config import DEFAULT_PLANNING_MODEL, DEFAULT_REASONING_MODEL, BABYCLAW_DEBUG
 
-def build_backend(reasoning_settings: ReasoningSettings, planning_model: str, reasoning_model: str, debug: bool):
-    filesystem_guard = FilesystemGuard()
 
-    transaction_manager = agents.TransactionManager(
-        filesystem_guard=filesystem_guard,
-        snapshot_root=Path.home() / ".babyclaw_snapshots",
-    )
+def print_restored_accessible_paths(filesystem_guard) -> None:
+    """Print restored approved directories for the terminal UI."""
+    approved_paths = filesystem_guard.list_approved()
 
-    execution_verifier = agents.ExecutionVerifier(
-        filesystem_guard=filesystem_guard,
-        debug=debug,
-    )
+    if not approved_paths:
+        return
 
-    memory_store = agents.SQLiteMemoryStore(MEMORY_DB_PATH)
-    memory = agents.MemoryAgent(memory_store=memory_store)
+    print("\nRestored saved accessible paths:")
 
-    saved_paths = memory.get_saved_accessible_path_values()
+    for approved_path in approved_paths:
+        active_marker = ""
 
-    for saved_path in saved_paths:
-        filesystem_guard.approve(saved_path)
+        if approved_path == filesystem_guard.get_active_directory():
+            active_marker = " (active)"
 
-    saved_active_path = memory.get_active_accessible_path()
+        print(f"- {approved_path}{active_marker}")
 
-    if saved_active_path:
-        filesystem_guard.set_active_directory(saved_active_path)
-
-    if saved_paths:
-        print("\nRestored saved accessible paths:")
-
-        for approved_path in filesystem_guard.list_approved():
-            active_marker = ""
-
-            if approved_path == filesystem_guard.get_active_directory():
-                active_marker = " (active)"
-
-            print(f"- {approved_path}{active_marker}")
-
-        print()
-
-    executor = agents.ExecutorAgent(
-        memory=memory,
-        filesystem_guard=filesystem_guard,
-        debug=debug,
-    )
-
-    response_generator = agents.ResponseGenerator(
-        memory=memory,
-        reasoning_model=reasoning_model,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    plan_executor = agents.PlanExecutor(
-        memory=memory,
-        executor=executor,
-        filesystem_guard=filesystem_guard,
-        response_generator=response_generator,
-        execution_verifier=execution_verifier,
-        transaction_manager=transaction_manager,
-        debug=debug,
-    )
-
-    reviewer = agents.ReviewerAgent(
-        model=reasoning_model,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    planner = agents.PlannerAgent(
-        memory=memory,
-        planning_model=planning_model,
-        filesystem_guard=filesystem_guard,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    memory_writer = agents.MemoryWriter(
-        model=planning_model,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    memory_router = agents.MemoryRouter(
-        model=planning_model,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    coordinator = agents.CoordinatorAgent(
-        planner=planner,
-        plan_executor=plan_executor,
-        response_generator=response_generator,
-        reviewer=reviewer,
-        memory=memory,
-        model=planning_model,
-        memory_router=memory_router,
-        memory_writer=memory_writer,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    return {
-        "filesystem_guard": filesystem_guard,
-        "transaction_manager": transaction_manager,
-        "memory": memory,
-        "coordinator": coordinator,
-    }
+    print()
 
 
 def main() -> None:
+    """Run the module entry point."""
     planning_model = DEFAULT_PLANNING_MODEL
     reasoning_model = DEFAULT_REASONING_MODEL
     debug = BABYCLAW_DEBUG
@@ -134,6 +44,8 @@ def main() -> None:
     transaction_manager = backend["transaction_manager"]
     memory = backend["memory"]
     coordinator = backend["coordinator"]
+
+    print_restored_accessible_paths(filesystem_guard)
 
     while True:
         prompt = input("You: ").strip()
@@ -228,6 +140,9 @@ def main() -> None:
                 print(f"\nBaby Claw: Access revoked for {Path(raw_path).expanduser().resolve()}")
                 print(memory_result)
                 print(active_result + "\n")
+            else:
+                print(f"\nBaby Claw: That path was not currently approved.")
+                print(memory_result + "\n")
 
             continue
 

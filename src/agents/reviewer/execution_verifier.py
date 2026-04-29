@@ -3,17 +3,21 @@ from pathlib import Path
 
 
 class ExecutionVerifier:
+    """Verify observable filesystem and command outcomes."""
     def __init__(self, filesystem_guard=None, debug: bool = True):
+        """Initialise the instance."""
         self.filesystem_guard = filesystem_guard
         self.debug = debug
 
 
     def _debug(self, label: str, value) -> None:
+        """Print a debug message when debug logging is enabled."""
         if self.debug:
             print(f"[EXECUTION VERIFIER DEBUG] {label}: {value}")
 
 
     def _split_pair(self, text: str) -> tuple[str, str] | None:
+        """Split tool input formatted as left::right."""
         if "::" not in text:
             return None
 
@@ -22,6 +26,7 @@ class ExecutionVerifier:
 
 
     def _resolve_safe_path(self, path_text: str) -> Path | None:
+        """Resolve safe path."""
         if self.filesystem_guard is None:
             return None
 
@@ -60,6 +65,9 @@ class ExecutionVerifier:
         if action == "delete_file":
             return self._verify_delete_file(resolved_input)
 
+        if action == "delete_directory":
+            return self._verify_delete_directory(resolved_input)
+
         if action == "move_path":
             return self._verify_move_path(resolved_input)
         
@@ -90,6 +98,7 @@ class ExecutionVerifier:
 
 
     def _verify_create_file(self, resolved_input: str) -> dict:
+        """Verify create file."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -139,6 +148,7 @@ class ExecutionVerifier:
 
 
     def _verify_write_file(self, resolved_input: str) -> dict:
+        """Verify write file."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -188,6 +198,7 @@ class ExecutionVerifier:
 
 
     def _verify_append_file(self, resolved_input: str) -> dict:
+        """Verify append file."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -232,6 +243,7 @@ class ExecutionVerifier:
 
 
     def _verify_delete_file(self, resolved_input: str) -> dict:
+        """Verify delete file."""
         safe = self._resolve_safe_path(resolved_input)
 
         if safe is None:
@@ -250,9 +262,32 @@ class ExecutionVerifier:
             "ok": True,
             "feedback": f"Verified deleted file: {safe}",
         }
+
+
+    def _verify_delete_directory(self, resolved_input: str) -> dict:
+        """Verify deleted directory no longer exists."""
+        safe = self._resolve_safe_path(resolved_input)
+
+        if safe is None:
+            return {
+                "ok": False,
+                "feedback": f"Deleted directory path is not approved: {resolved_input}",
+            }
+
+        if safe.exists():
+            return {
+                "ok": False,
+                "feedback": f"Expected directory to be deleted, but it still exists: {safe}",
+            }
+
+        return {
+            "ok": True,
+            "feedback": f"Verified deleted directory: {safe}",
+        }
     
 
     def _verify_create_directory(self, resolved_input: str) -> dict:
+        """Verify create directory."""
         safe = self._resolve_safe_path(resolved_input)
 
         if safe is None:
@@ -274,6 +309,7 @@ class ExecutionVerifier:
 
 
     def _verify_move_path(self, resolved_input: str) -> dict:
+        """Verify move path."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -318,6 +354,7 @@ class ExecutionVerifier:
 
 
     def _verify_copy_path(self, resolved_input: str) -> dict:
+        """Verify copy path."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -356,6 +393,7 @@ class ExecutionVerifier:
 
 
     def _verify_rename_path(self, resolved_input: str) -> dict:
+        """Verify rename path."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -402,6 +440,7 @@ class ExecutionVerifier:
     
 
     def _verify_run_python_file(self, step_result: str) -> dict:
+        """Verify run python file."""
         if step_result.startswith("Error") or step_result.startswith("Access denied"):
             return {
                 "ok": False,
@@ -434,6 +473,7 @@ class ExecutionVerifier:
     
     
     def _verify_python_content_quality(self, safe: Path, content: str) -> dict | None:
+        """Verify python content quality."""
         if safe.suffix.lower() != ".py":
             return None
 
@@ -537,6 +577,7 @@ class ExecutionVerifier:
         return None
     
     def _verify_move_directory_contents(self, resolved_input: str) -> dict:
+        """Verify move directory contents."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:

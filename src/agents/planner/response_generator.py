@@ -5,7 +5,9 @@ import prompts
 
 
 class ResponseGenerator:
+    """Generate final responses and file content through the reasoning model."""
     def __init__(self, memory=None, reasoning_model: str | None = None, reasoning_settings=None, debug: bool = True):
+        """Initialise the instance."""
         self.memory = memory
         self.reasoning_settings = reasoning_settings
         self.debug = debug
@@ -13,11 +15,13 @@ class ResponseGenerator:
 
 
     def _debug(self, label: str, value) -> None:
+        """Print a debug message when debug logging is enabled."""
         if self.debug:
             print(f"[RESPONSE GENERATOR DEBUG] {label}: {value}")
 
 
     def _get_context(self) -> str:
+        """Return recent short-term context when memory is available."""
         if self.memory is None:
             return ""
 
@@ -28,6 +32,7 @@ class ResponseGenerator:
 
 
     def _ask_reasoning_model(self, prompt: str, system_prompt: str, temperature: float, debug_label: str, think: str | None = None) -> str:
+        """Call the reasoning model and return text or an error message."""
         if think is None:
             think = self.reasoning_settings.response_think if self.reasoning_settings else "medium"
 
@@ -84,6 +89,7 @@ class ResponseGenerator:
 
 
     def transform_content(self, prompt: str, source_text: str, transformation: str) -> str:
+        """Transform content."""
         user_prompt = (
             f"Original user request:\n{prompt}\n\n"
             f"Transformation type:\n{transformation}\n\n"
@@ -99,6 +105,7 @@ class ResponseGenerator:
 
 
     def build_source_text(self, plan: dict, context: str, execution_result: str) -> str:
+        """Select the source text for response generation from plan outputs."""
         target_source = plan.get("target_source", "NONE")
 
         if target_source == "MEMORY":
@@ -140,6 +147,7 @@ class ResponseGenerator:
 
 
     def generate_file_content(self, prompt: str, execution_context: str = "") -> str:
+        """Generate file content."""
         context = self._get_context()
         last_file_name = self.memory.get_last_active_file_name() if self.memory else ""
         last_file_content = self.memory.get_last_active_file_content() if self.memory else ""
@@ -163,6 +171,7 @@ class ResponseGenerator:
 
 
     def improve_file_content(self, prompt: str, existing_content: str, instruction: str) -> str:
+        """Improve file content."""
         user_prompt = (
             f"User request:\n{prompt}\n\n"
             f"Edit instruction for this file only:\n{instruction or prompt}\n\n"

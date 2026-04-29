@@ -6,6 +6,7 @@ import prompts
 
 
 class MemoryWriter:
+    """Extract durable memory candidates from user messages."""
     def __init__(self, model: str | None = None, reasoning_settings=None, debug: bool = True):
         """
         Extracts durable long-term memories from the user's message.
@@ -19,11 +20,13 @@ class MemoryWriter:
 
 
     def _debug(self, label: str, value) -> None:
+        """Print a debug message when debug logging is enabled."""
         if self.debug:
             print(f"[MEMORY WRITER DEBUG] {label}: {value}")
 
 
     def _extract_json(self, text: str) -> dict:
+        """Extract json."""
         cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         start = cleaned.find("{")
@@ -58,7 +61,6 @@ class MemoryWriter:
 
         save_markers = [
             "remember",
-            "remeber",
             "save this",
             "save that",
             "save my",
@@ -80,6 +82,7 @@ class MemoryWriter:
 
 
     def _normalise_extracted_memories(self, parsed: dict) -> list[dict]:
+        """Normalise normalise extracted memories."""
         memories = parsed.get("memories", [])
 
         if not isinstance(memories, list):

@@ -2,12 +2,15 @@ from pathlib import Path
 
 
 class FilesystemGuard:
+    """Track approved directories and resolve safe filesystem paths."""
     def __init__(self):
+        """Initialise the instance."""
         self.approved_directories: list[Path] = []
         self.active_directory: Path | None = None
 
 
     def request_approval(self, raw_path: str) -> str:
+        """Build the user-facing approval request for a directory."""
         resolved = Path(raw_path).expanduser().resolve()
 
         return (
@@ -17,6 +20,7 @@ class FilesystemGuard:
         )
     
     def set_active_directory(self, raw_path: str | Path) -> bool:
+        """Set active directory."""
         resolved = Path(raw_path).expanduser().resolve()
 
         if resolved not in self.approved_directories:
@@ -30,6 +34,7 @@ class FilesystemGuard:
 
 
     def approve(self, raw_path: str) -> bool:
+        """Approve a directory and make it active."""
         resolved = Path(raw_path).expanduser().resolve()
 
         if not resolved.exists() or not resolved.is_dir():
@@ -57,6 +62,7 @@ class FilesystemGuard:
 
 
     def resolve_path(self, file_path: str | Path) -> Path:
+        """Resolve a path relative to the active directory when needed."""
         raw = Path(file_path).expanduser()
 
         if not raw.is_absolute() and self.active_directory is not None:
@@ -66,6 +72,7 @@ class FilesystemGuard:
 
 
     def is_approved(self, file_path: str | Path) -> bool:
+        """Return whether a path is inside an approved directory."""
         target = self.resolve_path(file_path)
 
         return any(
@@ -75,10 +82,11 @@ class FilesystemGuard:
 
 
     def safe_path(self, path: str | Path) -> Path | None:
-        raw_path = Path(str(path).strip().strip("\"'"))
+        """Return a resolved path only when it is approved."""
+        raw_path = Path(str(path).strip().strip("\"'")).expanduser()
 
         if raw_path.is_absolute():
-            candidate = raw_path.expanduser().resolve()
+            candidate = raw_path.resolve()
         else:
             active_directory = self.get_active_directory()
 
@@ -100,10 +108,12 @@ class FilesystemGuard:
 
 
     def list_approved(self) -> list[str]:
+        """List approved."""
         return [str(directory) for directory in self.approved_directories]
 
 
     def get_active_directory(self) -> str:
+        """Return active directory."""
         if self.active_directory is None:
             return ""
 
@@ -111,6 +121,7 @@ class FilesystemGuard:
 
 
     def revoke(self, raw_path: str) -> bool:
+        """Remove a directory from the approved set."""
         resolved = Path(raw_path).expanduser().resolve()
 
         before_count = len(self.approved_directories)
@@ -132,6 +143,7 @@ class FilesystemGuard:
 
 
     def get_approved_root_for_path(self, file_path: str | Path) -> Path | None:
+        """Return approved root for path."""
         target = self.resolve_path(file_path)
 
         matching_roots = [

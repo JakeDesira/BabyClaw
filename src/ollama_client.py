@@ -6,13 +6,16 @@ from config import OLLAMA_SUPPORTS_THINK
 
 @dataclass
 class LLMResponse:
+    """Container for a language model response or transport error."""
     ok: bool
     content: str = ""
     error: str = ""
 
 
 class OllamaClient:
+    """Small wrapper around the Ollama chat client."""
     def __init__(self, model: str | None = None, supports_think: bool | None = None):
+        """Initialise the instance."""
         self.host = os.getenv("OLLAMA_HOST_URL", "http://localhost:11434")
         self.model = model or os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
         self.client = Client(host=self.host)
@@ -24,6 +27,7 @@ class OllamaClient:
 
 
     def _build_request_args(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None, think: str | bool | None = None) -> dict:
+        """Build request args."""
         messages = []
 
         if system_prompt:
@@ -61,6 +65,7 @@ class OllamaClient:
 
 
     def ask(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None, think: str | bool | None = None) -> LLMResponse:
+        """Send a chat request to Ollama and return a normalized response."""
         request_args = self._build_request_args(
             prompt=prompt,
             system_prompt=system_prompt,

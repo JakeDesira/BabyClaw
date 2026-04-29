@@ -2,23 +2,13 @@ from pathlib import Path
 import shutil
 import uuid
 
-
-WRITE_ACTIONS = {
-    "create_file",
-    "write_file",
-    "append_file",
-    "delete_file",
-    "edit_file",
-    "create_directory",
-    "move_path",
-    "move_directory_contents",
-    "copy_path",
-    "rename_path",
-}
+from action_constants import WRITE_ACTIONS
 
 
 class TransactionManager:
+    """Create and restore snapshots around filesystem writes."""
     def __init__(self, filesystem_guard, snapshot_root: str | Path = ".babyclaw_snapshots"):
+        """Initialise the instance."""
         self.filesystem_guard = filesystem_guard
         self.snapshot_root = Path(snapshot_root).expanduser().resolve()
         self.snapshot_root.mkdir(parents=True, exist_ok=True)
@@ -28,6 +18,7 @@ class TransactionManager:
 
 
     def has_write_actions(self, actions: list[dict]) -> bool:
+        """Return whether any action would modify the filesystem."""
         return any(
             item.get("action") in WRITE_ACTIONS
             for item in actions
@@ -35,6 +26,7 @@ class TransactionManager:
 
 
     def get_last_snapshot_path(self) -> str:
+        """Return last snapshot path."""
         if self.last_snapshot_path is None:
             return ""
 
@@ -42,6 +34,7 @@ class TransactionManager:
 
 
     def get_last_target_path(self) -> str:
+        """Return last target path."""
         if self.last_target_path is None:
             return ""
 
@@ -49,6 +42,7 @@ class TransactionManager:
 
 
     def snapshot_active_directory(self) -> str:
+        """Create a snapshot of the active approved directory."""
         active_directory = self.filesystem_guard.active_directory
 
         if active_directory is None:
@@ -58,6 +52,7 @@ class TransactionManager:
 
 
     def snapshot_directory(self, directory_path: str | Path) -> str:
+        """Create a snapshot of an approved directory."""
         directory = Path(directory_path).expanduser().resolve()
 
         if not directory.exists() or not directory.is_dir():
@@ -84,6 +79,7 @@ class TransactionManager:
 
 
     def rollback_last_snapshot(self) -> str:
+        """Restore the most recent filesystem snapshot."""
         if self.last_snapshot_path is None or self.last_target_path is None:
             return "Nothing to undo. No snapshot is available."
 
@@ -146,5 +142,6 @@ class TransactionManager:
 
 
     def clear_last_snapshot(self) -> None:
+        """Clear last snapshot."""
         self.last_snapshot_path = None
         self.last_target_path = None

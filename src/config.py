@@ -1,5 +1,11 @@
 import os
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*_args, **_kwargs):
+        """Fallback dotenv loader used when python-dotenv is unavailable."""
+        return False
 
 from paths import PROJECT_ROOT
 

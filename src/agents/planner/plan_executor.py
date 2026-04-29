@@ -1,18 +1,6 @@
 from pathlib import Path
 
-
-WRITE_ACTIONS = {
-    "create_file",
-    "write_file",
-    "append_file",
-    "delete_file",
-    "edit_file",
-    "create_directory",
-    "move_path",
-    "move_directory_contents",
-    "copy_path",
-    "rename_path",
-}
+from action_constants import SKIP_SEARCH_DIRS, WRITE_ACTIONS
 
 
 QUIET_ACTIONS = {
@@ -22,7 +10,9 @@ QUIET_ACTIONS = {
 
 
 class PlanExecutor:
+    """Prepare and execute planner actions against memory and tools."""
     def __init__(self, memory=None, executor=None, filesystem_guard=None, response_generator=None, execution_verifier=None, transaction_manager=None, debug: bool = True):
+        """Initialise the instance."""
         self.memory = memory
         self.executor = executor
         self.filesystem_guard = filesystem_guard
@@ -35,11 +25,13 @@ class PlanExecutor:
 
 
     def _debug(self, label: str, value) -> None:
+        """Print a debug message when debug logging is enabled."""
         if self.debug:
             print(f"[PLAN EXECUTOR DEBUG] {label}: {value}")
 
 
     def _get_approved_directories(self) -> list[str]:
+        """Return approved workspace directories from the filesystem guard."""
         if self.filesystem_guard is None:
             return []
 
@@ -47,6 +39,7 @@ class PlanExecutor:
     
 
     def set_task_working_directory(self, directory: str) -> None:
+        """Set task working directory."""
         cleaned = directory.strip().strip("'\"")
 
         if not cleaned:
@@ -66,10 +59,12 @@ class PlanExecutor:
 
 
     def clear_task_working_directory(self) -> None:
+        """Clear task working directory."""
         self.task_working_directory = ""
 
 
     def _get_task_or_active_directory(self) -> str:
+        """Return the task working directory or active approved directory."""
         if self.task_working_directory:
             return self.task_working_directory
 
@@ -91,21 +86,10 @@ class PlanExecutor:
 
     # ===== Directory/Path Helpers =====
     def _find_first_matching_path(self, root: Path, file_name: str) -> Path | None:
-        skip_dirs = {
-            ".git",
-            ".venv",
-            "venv",
-            "__pycache__",
-            "node_modules",
-            ".mypy_cache",
-            ".pytest_cache",
-            ".idea",
-            ".vscode",
-        }
-
+        """Return the first matching path under a root while skipping heavy folders."""
         try:
             for candidate in root.rglob(file_name):
-                if any(part in skip_dirs for part in candidate.parts):
+                if any(part in SKIP_SEARCH_DIRS for part in candidate.parts):
                     continue
 
                 if candidate.exists():
@@ -118,6 +102,7 @@ class PlanExecutor:
 
 
     def _resolve_relative_path(self, path_value: str, must_exist: bool = False) -> str:
+        """Resolve relative path."""
         path_value = path_value.strip().strip("'\"")
 
         if not path_value:
@@ -165,6 +150,9 @@ class PlanExecutor:
         else:
             base_dir = Path(approved_dirs[-1])
 
+        if first_part == base_dir.name.lower():
+            path = Path(*path_parts[1:]) if len(path_parts) > 1 else Path()
+
         candidate = base_dir / path
 
         if must_exist:
@@ -183,10 +171,12 @@ class PlanExecutor:
 
 
     def _get_active_or_default_directory(self) -> str:
+        """Return the active directory or fallback approved directory."""
         return self._get_task_or_active_directory()
 
 
     def _get_snapshot_directory_for_plan(self, prompt: str, plan: dict) -> str:
+        """Choose the directory that should be snapshotted for a plan."""
         approved_dirs = self._get_approved_directories()
 
         if not approved_dirs:
@@ -214,23 +204,13 @@ class PlanExecutor:
     
 
     def get_snapshot_directory_for_action(self, prompt: str, action: str, action_input: str) -> str:
+        """Return snapshot directory for action."""
         approved_dirs = self._get_approved_directories()
 
         if not approved_dirs:
             return ""
 
-        if action not in {
-            "create_file",
-            "write_file",
-            "append_file",
-            "delete_file",
-            "edit_file",
-            "create_directory",
-            "move_path",
-            "move_directory_contents",
-            "copy_path",
-            "rename_path",
-        }:
+        if action not in WRITE_ACTIONS:
             return ""
 
         try:
@@ -289,6 +269,7 @@ class PlanExecutor:
 
     # ==== Action Preparation Helpers =====
     def _prepare_create_file_action(self, prompt: str, action_input: str, previous_results: list[str] | None = None) -> str:
+        """Prepare create file action."""
         parts = action_input.split("::", 1)
         filepath = parts[0].strip()
         filepath = self._resolve_relative_path(filepath)
@@ -314,6 +295,7 @@ class PlanExecutor:
 
 
     def _prepare_existing_file_action(self, action_input: str) -> str:
+        """Resolve the file path portion of an action that targets an existing file."""
         parts = action_input.split("::", 1)
         filepath = parts[0].strip()
         rest = parts[1] if len(parts) > 1 else ""
@@ -326,7 +308,77 @@ class PlanExecutor:
         return filepath
 
 
+    def _get_previous_content_result(self, previous_results: list[str] | None) -> str:
+        """Return the latest usable prior tool result for chained content operations."""
+        for result in reversed(previous_results or []):
+            if not isinstance(result, str):
+                continue
+
+            cleaned = result.strip()
+
+            if not cleaned:
+                continue
+
+            if cleaned.startswith(("Error", "Access denied", "Warning")):
+                continue
+
+            return cleaned
+
+        return ""
+
+
+    def _looks_like_placeholder_content(self, content: str) -> bool:
+        """Detect syntactic placeholder content without matching specific wording."""
+        cleaned = content.strip()
+
+        if not cleaned:
+            return True
+
+        if "\n" in cleaned:
+            return False
+
+        placeholder_pairs = {
+            "[": "]",
+            "{": "}",
+            "<": ">",
+        }
+
+        return (
+            len(cleaned) >= 2
+            and cleaned[0] in placeholder_pairs
+            and cleaned[-1] == placeholder_pairs[cleaned[0]]
+        )
+
+
+    def _prepare_append_file_action(
+        self,
+        action_input: str,
+        previous_results: list[str] | None = None,
+    ) -> str:
+        """Resolve append_file input and replace placeholders with prior tool content."""
+        parts = action_input.split("::", 1)
+        filepath = parts[0].strip()
+        filepath = self._resolve_relative_path(filepath, must_exist=True)
+
+        previous_content = self._get_previous_content_result(previous_results)
+
+        if len(parts) == 1:
+            if previous_content:
+                return f"{filepath}::{previous_content}"
+
+            return filepath
+
+        content = parts[1]
+
+        if previous_content and self._looks_like_placeholder_content(content):
+            leading_whitespace = content[:len(content) - len(content.lstrip())]
+            content = f"{leading_whitespace}{previous_content}"
+
+        return f"{filepath}::{content}"
+
+
     def _prepare_move_action(self, action_input: str) -> str:
+        """Resolve source and destination paths for move and copy actions."""
         cleaned_input = action_input.strip().strip("'\"")
 
         if "::" in cleaned_input:
@@ -346,6 +398,7 @@ class PlanExecutor:
 
 
     def _prepare_rename_action(self, action_input: str) -> str:
+        """Resolve the source path for a rename while preserving the new basename."""
         parts = action_input.split("::", 1)
 
         if len(parts) != 2:
@@ -359,6 +412,7 @@ class PlanExecutor:
 
 
     def _prepare_action_input(self, prompt: str, action: str, action_input: str, previous_results: list[str] | None = None) -> str:
+        """Resolve raw planner input into executor-ready tool input."""
         if action == "create_directory":
             return self._resolve_relative_path(action_input)
 
@@ -377,7 +431,10 @@ class PlanExecutor:
         if action == "create_file":
             return self._prepare_create_file_action(prompt, action_input, previous_results)
 
-        if action in ("edit_file", "delete_file", "view_file", "append_file", "write_file", "run_python_file"):
+        if action == "append_file":
+            return self._prepare_append_file_action(action_input, previous_results)
+
+        if action in ("edit_file", "delete_file", "delete_directory", "view_file", "write_file", "run_python_file"):
             return self._prepare_existing_file_action(action_input)
 
         if action in ("move_path", "move_directory_contents", "copy_path"):
@@ -391,6 +448,7 @@ class PlanExecutor:
 
     # ===== Edit/Memory Helpers =====
     def _handle_edit_ready(self, step_result: str,prompt: str, previous_results: list[str] | None = None) -> str:
+        """Generate improved file content and write it after edit preparation."""
         _, filepath, instruction, existing_content = step_result.split("::", 3)
 
         if self.response_generator is None:
@@ -429,6 +487,7 @@ class PlanExecutor:
 
 
     def _remember_created_file(self, action: str, resolved_input: str, step_result: str | None) -> None:
+        """Store newly created file content as active memory."""
         if action != "create_file":
             return
 
@@ -449,6 +508,7 @@ class PlanExecutor:
 
     # ===== Execution Methods =====
     def _plan_has_write_actions(self, plan: dict) -> bool:
+        """Return whether the plan contains filesystem write actions."""
         return any(
             item.get("action") in WRITE_ACTIONS
             for item in plan.get("executor_actions", [])
@@ -456,6 +516,7 @@ class PlanExecutor:
     
 
     def _get_snapshot_metadata(self) -> dict:
+        """Return metadata for the latest snapshot."""
         if self.transaction_manager is None:
             return {
                 "snapshot_path": "",
@@ -475,6 +536,7 @@ class PlanExecutor:
         
 
     def _execute_prepared_action(self, prompt: str, action: str, action_input: str, resolved_input: str, previous_results: list[str] | None = None) -> dict:
+        """Execute a prepared action and verify its result."""
         step_result = self.executor.handle(action, resolved_input, prompt)
 
         if step_result is None:
@@ -525,11 +587,13 @@ class PlanExecutor:
 
 
     def execute_plan_once(self, prompt: str, plan: dict) -> dict:
+        """Execute a validated plan one time."""
         self._debug("EXECUTE PROMPT", prompt)
         self._debug("EXECUTE PLAN", plan)
 
         context = ""
         execution_results = []
+        content_results = []
         user_visible_results = []
         error = ""
         snapshot_result = ""
@@ -578,11 +642,17 @@ class PlanExecutor:
                 action_input = item.get("input", "")
 
                 try:
+                    previous_results_for_action = (
+                        content_results
+                        if action == "append_file"
+                        else execution_results
+                    )
+
                     resolved_input = self._prepare_action_input(
                         prompt,
                         action,
                         action_input,
-                        previous_results=execution_results,
+                        previous_results=previous_results_for_action,
                     )
                 except Exception as e:
                     error = f"Error preparing action input for '{action}': {e}"
@@ -656,6 +726,9 @@ class PlanExecutor:
                     user_visible_results.append(step_result)
                     break
 
+                if action in {"read_file", "read_multiple_files", "view_file"}:
+                    content_results.append(step_result)
+
                 if action not in QUIET_ACTIONS or len(actions) == 1:
                     user_visible_results.append(step_result)
 
@@ -691,6 +764,7 @@ class PlanExecutor:
     
 
     def execute_single_action(self, prompt: str, action: str, action_input: str, previous_results: list[str] | None = None) -> dict:
+        """Prepare and execute one action in iterative mode."""
         if self.executor is None:
             return {
                 "ok": False,

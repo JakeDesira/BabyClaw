@@ -2,18 +2,22 @@ import agents.executor.tools as tools
 
 
 class ExecutorAgent:
+    """Dispatch low-level executor actions to concrete tools."""
     def __init__(self, memory=None, filesystem_guard=None, debug: bool = True):
+        """Initialise the instance."""
         self.memory = memory
         self.filesystem_guard = filesystem_guard
         self.debug = debug
 
     
     def _debug(self, label: str, value) -> None:
+        """Print a debug message when debug logging is enabled."""
         if self.debug:
             print(f"[EXECUTOR DEBUG] {label}: {value}")
 
     
     def _handle_list_input_files(self) -> str:
+        """Return the visible uploaded input files."""
         files = tools.list_input_files()
 
         if not files:
@@ -23,6 +27,7 @@ class ExecutorAgent:
     
 
     def _remember_file_if_valid(self, file_name: str, file_content: str) -> None:
+        """Store a successfully read file as active memory."""
         if self.memory is None:
             return
 
@@ -36,6 +41,7 @@ class ExecutorAgent:
 
 
     def _try_get_active_file_content(self, lower_prompt: str) -> str | None:
+        """Return active file content for direct follow-up prompts."""
         if self.memory is None:
             return None
 
@@ -71,6 +77,7 @@ class ExecutorAgent:
     
 
     def _try_get_previous_file_content(self, lower_prompt: str) -> str | None:
+        """Return previous active file content for comparison follow-ups."""
         if self.memory is None:
             return None
 
@@ -86,6 +93,7 @@ class ExecutorAgent:
 
 
     def _handle_read_file(self, action_input: str, original_prompt: str) -> str:
+        """Resolve and read an uploaded/input file."""
         lower_prompt = original_prompt.lower().strip()
 
         if action_input and action_input != "NONE":
@@ -125,6 +133,7 @@ class ExecutorAgent:
         return "Please specify which file to read. Available files:\n" + "\n".join(files)
 
     def _handle_read_multiple_files(self, action_input: str) -> str:
+        """Read a comma-separated set of uploaded/input files."""
         filenames = [
             name.strip()
             for name in action_input.split(",")
@@ -138,6 +147,7 @@ class ExecutorAgent:
     
 
     def _remember_viewed_workspace_file(self, action_input: str, result: str) -> None:
+        """Store a successfully viewed workspace file as active memory."""
         if self.memory is None:
             return
 
@@ -156,6 +166,7 @@ class ExecutorAgent:
 
 
     def handle(self, action: str, action_input: str = "", original_prompt: str = "") -> str:
+        """Describe the handle operation."""
         action = action.strip()
         action_input = action_input or ""
         original_prompt = original_prompt or ""
@@ -178,6 +189,7 @@ class ExecutorAgent:
             "write_file": tools.write_guarded_file,
             "append_file": tools.append_guarded_file,
             "delete_file": tools.delete_guarded_file,
+            "delete_directory": tools.delete_directory,
             "edit_file": tools.prepare_guarded_edit_file,
             "find_file": tools.find_guarded_file,
             "list_directory": tools.list_directory,

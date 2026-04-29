@@ -2,54 +2,18 @@ import json
 import re
 from pathlib import Path
 
+from action_constants import (
+    CODE_MUTATING_ACTIONS,
+    INSPECTION_ACTIONS,
+    WRITE_ACTIONS,
+)
 from ollama_client import OllamaClient
 import prompts
 
-WRITE_ACTIONS = {
-    "create_file",
-    "write_file",
-    "append_file",
-    "delete_file",
-    "edit_file",
-    "create_directory",
-    "move_path",
-    "move_directory_contents",
-    "copy_path",
-    "rename_path",
-}
-
-
-INSPECTION_ACTIONS = {
-    "list_directory",
-    "view_file",
-    "find_file",
-}
-
-
-PROGRESS_ACTIONS = {
-    "create_file",
-    "write_file",
-    "append_file",
-    "delete_file",
-    "edit_file",
-    "create_directory",
-    "move_path",
-    "move_directory_contents",
-    "copy_path",
-    "rename_path",
-    "run_python_file",
-}
-
-CODE_MUTATING_ACTIONS = {
-    "create_file",
-    "write_file",
-    "append_file",
-    "edit_file",
-}
-
 
 class CoordinatorAgent:
-    def __init__(self, planner=None, plan_executor=None, response_generator=None, reviewer=None, memory=None, memory_router=None, memory_writer=None, model: str | None = None, reasoning_settings=None, debug: bool = True):
+    """Route user requests through memory, planning, execution, and review."""
+    def __init__(self, planner=None, plan_executor=None, response_generator=None, reviewer=None, memory=None, memory_router=None, memory_writer=None, model: str | None = None, reasoning_settings=None, debug: bool = True, trace_callback=None):
         """
         Entry point of the Baby Claw architecture.
 
@@ -69,11 +33,32 @@ class CoordinatorAgent:
         self.reasoning_settings = reasoning_settings
         self.debug = debug
         self.last_trace = {}
+        self.trace_callback = trace_callback
 
 
     def _debug(self, label: str, value) -> None:
+        """Print a debug message when debug logging is enabled."""
         if self.debug:
             print(f"[COORDINATOR DEBUG] {label}: {value}")
+
+
+    def set_trace_callback(self, trace_callback) -> None:
+        """Set a callback that receives trace snapshots as work progresses."""
+        self.trace_callback = trace_callback
+
+
+    def _publish_trace_update(self) -> None:
+        """Publish the current trace to an optional live-debug callback."""
+        if self.trace_callback is None:
+            return
+
+        if not self.last_trace:
+            return
+
+        try:
+            self.trace_callback(self.last_trace)
+        except Exception as e:
+            self._debug("TRACE CALLBACK ERROR", e)
 
 
     # ===== Memory Helpers =====
@@ -91,6 +76,7 @@ class CoordinatorAgent:
         
 
     def _might_save_memory(self, prompt: str) -> bool:
+        """Return whether the prompt may request memory saving."""
         lower_prompt = prompt.lower()
 
         save_markers = [
@@ -237,6 +223,7 @@ class CoordinatorAgent:
     
     # ===== Routing Helpers =====
     def _get_approved_directories(self) -> list[str]:
+        """Return approved workspace directories from the filesystem guard."""
         if self.plan_executor is not None:
             filesystem_guard = getattr(self.plan_executor, "filesystem_guard", None)
 
@@ -259,11 +246,13 @@ class CoordinatorAgent:
 
 
     def _normalise_directory_match_text(self, text: str) -> str:
+        """Normalise normalise directory match text."""
         lowered = text.lower().replace("\\", "/")
         return re.sub(r"[^a-z0-9]+", " ", lowered).strip()
 
 
     def _detect_task_working_directory(self, prompt: str) -> str:
+        """Detect an approved directory mentioned in the prompt."""
         approved_dirs = self._get_approved_directories()
 
         if not approved_dirs:
@@ -296,6 +285,7 @@ class CoordinatorAgent:
 
 
     def _set_task_working_directory_from_prompt(self, prompt: str) -> str:
+        """Set the task working directory when the prompt names one."""
         task_directory = self._detect_task_working_directory(prompt)
 
         if not task_directory:
@@ -313,19 +303,6 @@ class CoordinatorAgent:
 
         return task_directory
 
-
-    def _get_last_result_for_action(self, observations: list[dict], action: str, action_input: str) -> str:
-        action = action.strip()
-        action_input = action_input.strip()
-
-        for observation in reversed(observations):
-            if (
-                observation.get("action", "").strip() == action
-                and observation.get("input", "").strip() == action_input
-            ):
-                return observation.get("result", "")
-
-        return ""
 
     def _normalise_action_key(self, action: str, action_input: str) -> str:
         """
@@ -348,32 +325,8 @@ class CoordinatorAgent:
         return action in INSPECTION_ACTIONS
     
 
-    def _is_progress_action(self, action: str) -> bool:
-        """
-        Return True if an action makes progress beyond inspection.
-        """
-        return action in PROGRESS_ACTIONS
-
-
-    def _count_inspection_steps_since_last_write(self, observations: list[dict]) -> int:
-        """
-        Count how many consecutive inspection steps happened since the last write action.
-        """
-        count = 0
-
-        for observation in reversed(observations):
-            action = observation.get("action", "")
-
-            if self._is_write_action(action):
-                break
-
-            if self._is_inspection_action(action):
-                count += 1
-
-        return count
-    
-
     def _looks_like_debug_fragment(self, prompt: str) -> bool:
+        """Return whether input resembles debug fragment."""
         lower_prompt = prompt.lower().strip()
 
         debug_markers = [
@@ -401,10 +354,180 @@ class CoordinatorAgent:
 
         if lower_prompt.startswith("file \"") or lower_prompt.startswith("traceback"):
             return True
-        
+
         return False
-    
+
+
+    def _load_babyclaw_trace(self, prompt: str) -> dict:
+        """Parse a pasted BabyClaw trace JSON object if one is present."""
+        trace, _ = self._extract_babyclaw_trace_and_remainder(prompt)
+
+        return trace
+
+
+    def _extract_babyclaw_trace_and_remainder(self, prompt: str) -> tuple[dict, str]:
+        """Return a pasted BabyClaw trace and any non-trace user instruction."""
+        cleaned = prompt.strip()
+
+        if not cleaned:
+            return {}, ""
+
+        candidates = [(cleaned, 0, len(prompt))]
+
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+
+        if start != -1 and end != -1 and end > start:
+            leading_offset = len(prompt) - len(prompt.lstrip())
+            candidates.append((
+                cleaned[start:end + 1],
+                leading_offset + start,
+                leading_offset + end + 1,
+            ))
+
+        for candidate, span_start, span_end in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except Exception:
+                continue
+
+            if not isinstance(parsed, dict):
+                continue
+
+            if self._is_babyclaw_trace_data(parsed):
+                remainder = (
+                    prompt[:span_start].strip()
+                    + "\n"
+                    + prompt[span_end:].strip()
+                ).strip()
+                return parsed, remainder
+
+        return {}, ""
+
+
+    def _is_babyclaw_trace_data(self, value: dict) -> bool:
+        """Return whether parsed JSON resembles a BabyClaw internal trace."""
+        if not isinstance(value, dict):
+            return False
+
+        trace_keys = {
+            "plan",
+            "planner_steps",
+            "steps",
+            "execution_data",
+            "snapshot_result",
+            "stop_reason",
+            "final_step",
+        }
+
+        matched_keys = sum(1 for key in trace_keys if key in value)
+
+        if matched_keys >= 2:
+            return True
+
+        plan = value.get("plan", {})
+
+        return (
+            isinstance(plan, dict)
+            and (
+                plan.get("mode") == "ITERATIVE"
+                or isinstance(plan.get("planner_steps"), list)
+                or isinstance(plan.get("executor_actions"), list)
+            )
+        )
+
+
+    def _summarise_pasted_trace(self, trace: dict) -> str:
+        """Return a safe diagnostic response for a pasted internal trace."""
+        parts = [
+            "I read this as a BabyClaw internal trace, so I will not execute the actions inside it.",
+        ]
+
+        stop_reason = trace.get("stop_reason", "")
+
+        if stop_reason:
+            parts.append(f"Stop reason: {stop_reason}")
+
+        execution_data = trace.get("execution_data", {})
+        steps = trace.get("steps", [])
+
+        if not steps and isinstance(execution_data, dict):
+            steps = execution_data.get("steps", [])
+
+        planner_steps = trace.get("planner_steps", [])
+
+        if not planner_steps:
+            plan = trace.get("plan", {})
+
+            if isinstance(plan, dict):
+                planner_steps = plan.get("planner_steps", [])
+
+        if steps:
+            first_step = steps[0]
+            active_directory = first_step.get("resolved_input", "")
+
+            if active_directory:
+                parts.append(f"Active directory inspected: {active_directory}")
+
+        created_directories = [
+            step.get("resolved_input", "")
+            for step in steps
+            if step.get("ok") and step.get("action") == "create_directory"
+        ]
+
+        if created_directories:
+            parts.append(
+                "Directories created:\n- "
+                + "\n- ".join(created_directories[:8])
+            )
+
+        failed_steps = [
+            step
+            for step in steps
+            if not step.get("ok", False)
+            and step.get("action") != "completion_check"
+        ]
+
+        if failed_steps:
+            latest_failure = failed_steps[-1]
+            failure_text = latest_failure.get("result", "").strip()
+
+            if failure_text:
+                parts.append(f"Latest failing action: {failure_text}")
+
+        completion_failures = [
+            step.get("result", "")
+            for step in steps
+            if step.get("action") == "completion_check"
+        ]
+
+        if completion_failures:
+            parts.append(completion_failures[-1])
+
+        if planner_steps:
+            last_planner_step = planner_steps[-1]
+            action = last_planner_step.get("action", "")
+            action_input = last_planner_step.get("input", "")
+
+            if action:
+                parts.append(f"Last planner action: {action} {action_input}".strip())
+
+        if stop_reason == "Maximum iterative steps reached.":
+            parts.append(
+                "This usually means the agent spent too many steps debugging or filling structure "
+                "and hit the step limit before it could finish the remaining scaffold items."
+            )
+
+        parts.append(
+            "The trace should be handled as diagnostic input. If you want BabyClaw to continue that project, "
+            "ask it to continue the existing folder by path instead of pasting the trace as the task."
+        )
+
+        return "\n\n".join(parts)
+
+
     def _looks_like_file_operation(self, prompt: str) -> bool:
+        """Return whether input resembles file operation."""
         lower_prompt = prompt.lower()
 
         filesystem_action_words = [
@@ -434,6 +557,7 @@ class CoordinatorAgent:
     
 
     def _looks_like_direct_writing_task(self, prompt: str) -> bool:
+        """Return whether input resembles direct writing task."""
         lower_prompt = prompt.lower()
 
         writing_words = [
@@ -443,6 +567,10 @@ class CoordinatorAgent:
             "rewrite",
             "re-write",
             "generate",
+            "output",
+            "show",
+            "give",
+            "provide",
         ]
 
         writing_objects = [
@@ -452,12 +580,19 @@ class CoordinatorAgent:
             "reply",
             "paragraph",
             "post",
+            "code",
+            "snippet",
+            "syntax",
+            "example",
+            "function",
         ]
 
         tool_or_file_words = [
             "file",
             "folder",
             "directory",
+            "codebase",
+            "project",
             "save",
             "send",
             "append",
@@ -485,6 +620,7 @@ class CoordinatorAgent:
     
 
     def _looks_like_directory_listing(self, prompt: str) -> bool:
+        """Return whether input resembles directory listing."""
         lower_prompt = prompt.lower()
 
         return (
@@ -499,6 +635,7 @@ class CoordinatorAgent:
 
 
     def _is_short_follow_up(self, prompt: str) -> bool:
+        """Return whether the value is short follow up."""
         lower_prompt = prompt.lower().strip()
 
         short_follow_ups = {
@@ -518,6 +655,7 @@ class CoordinatorAgent:
     
 
     def _looks_like_project_fix_task(self, prompt: str) -> bool:
+        """Return whether input resembles project fix task."""
         lower_prompt = prompt.lower()
 
         project_words = [
@@ -552,6 +690,7 @@ class CoordinatorAgent:
     
 
     def _looks_like_project_build_task(self, prompt: str) -> bool:
+        """Return whether input resembles project build task."""
         lower_prompt = prompt.lower()
 
         build_words = [
@@ -581,7 +720,227 @@ class CoordinatorAgent:
         )
 
 
+    def _requires_scaffold_completion_check(self, prompt: str) -> bool:
+        """Return whether a project build should pass structural completion checks."""
+        if not self._looks_like_project_build_task(prompt):
+            return False
+
+        lower_prompt = prompt.lower()
+        strict_markers = [
+            "complete",
+            "whole",
+            "full",
+            "entire",
+            "pipeline",
+            "from scratch",
+        ]
+
+        return any(marker in lower_prompt for marker in strict_markers)
+
+
+    def _get_resolved_step_path(self, step_result: dict) -> Path | None:
+        """Extract the filesystem path targeted by a completed step."""
+        raw_input = str(step_result.get("resolved_input", "")).split("::", 1)[0].strip()
+
+        if not raw_input:
+            return None
+
+        try:
+            return Path(raw_input).expanduser().resolve()
+        except Exception:
+            return Path(raw_input).expanduser()
+
+
+    def _path_exists_or_touched(self, path: Path, touched_paths: set[Path]) -> bool:
+        """Return whether a path exists now or was touched in the current trace."""
+        try:
+            resolved_path = path.expanduser().resolve()
+        except Exception:
+            resolved_path = path.expanduser()
+
+        if resolved_path in touched_paths:
+            return True
+
+        try:
+            return resolved_path.exists()
+        except Exception:
+            return False
+
+
+    def _maybe_set_created_project_directory(
+        self,
+        prompt: str,
+        action: str,
+        step_result: dict,
+    ) -> None:
+        """Use the first created project folder as the task working directory."""
+        if (
+            self.plan_executor is None
+            or action != "create_directory"
+            or not step_result.get("ok", False)
+            or not self._requires_scaffold_completion_check(prompt)
+        ):
+            return
+
+        filesystem_guard = getattr(self.plan_executor, "filesystem_guard", None)
+        active_directory = ""
+
+        if filesystem_guard is not None:
+            try:
+                active_directory = filesystem_guard.get_active_directory()
+            except AttributeError:
+                active_directory = ""
+
+        existing_task_directory = getattr(self.plan_executor, "task_working_directory", "")
+
+        if existing_task_directory and active_directory:
+            try:
+                if Path(existing_task_directory).resolve() != Path(active_directory).resolve():
+                    return
+            except Exception:
+                return
+
+        candidate = self._get_resolved_step_path(step_result)
+
+        if candidate is None:
+            return
+
+        base_directory = existing_task_directory or active_directory
+
+        if not base_directory:
+            return
+
+        try:
+            base_path = Path(base_directory).expanduser().resolve()
+            candidate_path = candidate.expanduser().resolve()
+        except Exception:
+            return
+
+        if candidate_path.parent != base_path:
+            return
+
+        utility_directory_names = {
+            "src",
+            "tests",
+            "test",
+            "docs",
+            "documentation",
+            "assets",
+        }
+
+        if candidate_path.name.lower() in utility_directory_names:
+            return
+
+        try:
+            self.plan_executor.set_task_working_directory(str(candidate_path))
+            self._debug("ITERATIVE PROJECT WORKING DIRECTORY", str(candidate_path))
+        except AttributeError:
+            pass
+
+
+    def _get_scaffold_project_root(self, steps_trace: list[dict]) -> Path | None:
+        """Return the likely project root for an iterative scaffold trace."""
+        if self.plan_executor is not None:
+            task_directory = getattr(self.plan_executor, "task_working_directory", "")
+
+            if task_directory:
+                try:
+                    return Path(task_directory).expanduser().resolve()
+                except Exception:
+                    return Path(task_directory).expanduser()
+
+        for step in steps_trace:
+            if step.get("action") != "create_directory" or not step.get("ok", False):
+                continue
+
+            path = self._get_resolved_step_path(step)
+
+            if path is not None:
+                return path
+
+        return None
+
+
+    def _get_scaffold_completion_issues(
+        self,
+        prompt: str,
+        steps_trace: list[dict],
+    ) -> list[str]:
+        """Return missing items that make a full project scaffold incomplete."""
+        if not self._requires_scaffold_completion_check(prompt):
+            return []
+
+        root = self._get_scaffold_project_root(steps_trace)
+
+        if root is None:
+            return ["project root directory"]
+
+        touched_paths: set[Path] = set()
+
+        for step in steps_trace:
+            if not step.get("ok", False):
+                continue
+
+            path = self._get_resolved_step_path(step)
+
+            if path is None:
+                continue
+
+            touched_paths.add(path)
+
+        issues = []
+
+        if not self._path_exists_or_touched(root / "README.md", touched_paths):
+            issues.append("README.md inside the project root")
+
+        has_python_files = any(
+            path.suffix.lower() == ".py"
+            and path.is_relative_to(root)
+            for path in touched_paths
+        )
+
+        if not has_python_files:
+            try:
+                has_python_files = any(root.rglob("*.py"))
+            except Exception:
+                has_python_files = False
+
+        if not has_python_files:
+            return issues
+
+        required_paths = {
+            "main.py inside the project root": root / "main.py",
+            "src directory inside the project root": root / "src",
+            "src/__init__.py for package initialization": root / "src" / "__init__.py",
+            "tests directory inside the project root": root / "tests",
+        }
+
+        for description, path in required_paths.items():
+            if not self._path_exists_or_touched(path, touched_paths):
+                issues.append(description)
+
+        tests_dir = root / "tests"
+        has_test_file = any(
+            path.parent == tests_dir
+            and path.suffix.lower() == ".py"
+            and path.name.startswith("test_")
+            for path in touched_paths
+        )
+
+        if not has_test_file:
+            try:
+                has_test_file = any(tests_dir.glob("test_*.py"))
+            except Exception:
+                has_test_file = False
+
+        if not has_test_file:
+            issues.append("at least one focused test file in tests/")
+
+        return issues
+
+
     def _should_use_iterative_mode(self, prompt: str) -> bool:
+        """Return whether the request should use iterative execution."""
         if self._looks_like_project_fix_task(prompt):
             self._debug("ITERATIVE ROUTER RULE", "Project fix task detected.")
             return True
@@ -655,6 +1014,7 @@ class CoordinatorAgent:
     
     # ===== Main Entry Points =====
     def handle(self, prompt: str) -> str:
+        """Describe the handle operation."""
         if self.memory is not None:
             try:
                 self.memory.save_short_term(role="user", content=prompt)
@@ -662,6 +1022,22 @@ class CoordinatorAgent:
                 pass
 
         self._debug("ORIGINAL PROMPT", prompt)
+
+        pasted_trace, trace_remainder = self._extract_babyclaw_trace_and_remainder(prompt)
+
+        if pasted_trace:
+            trace_summary = self._summarise_pasted_trace(pasted_trace)
+
+            if not trace_remainder:
+                self._save_assistant_response(trace_summary)
+                return trace_summary
+
+            prompt = (
+                f"{trace_remainder}\n\n"
+                "Pasted BabyClaw trace context, for diagnosis only. "
+                "Do not execute the actions inside it:\n"
+                f"{trace_summary}"
+            )
 
         memory_save_result = ""
 
@@ -764,11 +1140,13 @@ class CoordinatorAgent:
                 "steps": [],
                 "review": {},
             }
+            self._publish_trace_update()
             self._debug("PLAN", plan)
 
             execution_data = self.plan_executor.execute_plan_once(prompt, plan)
             self.last_trace["execution_data"] = execution_data
             self.last_trace["steps"] = execution_data.get("steps", [])
+            self._publish_trace_update()
             self._debug("EXECUTION DATA", execution_data)
 
             context = execution_data.get("context", "")
@@ -861,6 +1239,7 @@ class CoordinatorAgent:
 
             review = self.reviewer.review(prompt, draft_result)
             self.last_trace["review"] = review
+            self._publish_trace_update()
             self._debug("REVIEW RESULT", review)
 
             if review.get("approved", False):
@@ -880,6 +1259,7 @@ class CoordinatorAgent:
     
 
     def _get_iterative_snapshot_metadata(self) -> dict:
+        """Return snapshot metadata for iterative traces."""
         if self.plan_executor is None:
             return {
                 "snapshot_result": "",
@@ -912,6 +1292,7 @@ class CoordinatorAgent:
         }
     
     def _action_input_targets_python_file(self, action_input: str) -> bool:
+        """Return whether an action input targets a Python file."""
         target_path = action_input.split("::", 1)[0].strip().strip("'\"")
 
         if not target_path:
@@ -922,7 +1303,8 @@ class CoordinatorAgent:
         return target_path.lower().endswith((".py", ".pyw"))
 
     
-    def handle_iterative(self, prompt: str, max_steps: int = 20) -> str:
+    def handle_iterative(self, prompt: str, max_steps: int = 30) -> str:
+        """Run the iterative planning and execution loop."""
         self._set_task_working_directory_from_prompt(prompt)
         
         observations = []
@@ -936,8 +1318,10 @@ class CoordinatorAgent:
         viewed_files_since_last_write = set()
         made_successful_write = False
         changed_since_last_run = False
+        completion_check_failures = 0
 
         def shorten_for_user(text: str, max_chars: int = 1200) -> str:
+            """Trim long internal text for user-facing stop messages."""
             if not isinstance(text, str):
                 return ""
 
@@ -949,6 +1333,7 @@ class CoordinatorAgent:
             return cleaned[:max_chars] + "\n\n... [truncated]"
 
         def user_stop_message(reason: str, detail: str = "") -> str:
+            """Build a concise user-facing stop message."""
             message = reason.strip()
 
             cleaned_detail = shorten_for_user(detail)
@@ -961,6 +1346,7 @@ class CoordinatorAgent:
             return message
 
         def snapshot_metadata() -> dict:
+            """Return current iterative snapshot metadata."""
             return self._get_iterative_snapshot_metadata()
 
         def set_trace(
@@ -968,6 +1354,7 @@ class CoordinatorAgent:
             stop_reason: str = "",
             include_snapshot_top_level: bool = False,
         ) -> None:
+            """Store the current iterative execution trace."""
             metadata = snapshot_metadata()
 
             trace = {
@@ -999,6 +1386,7 @@ class CoordinatorAgent:
                 trace["snapshot_target"] = metadata["snapshot_target"]
 
             self.last_trace = trace
+            self._publish_trace_update()
 
         # Deterministic first step for project/directory inspection tasks.
         first_step_result = self.plan_executor.execute_single_action(
@@ -1021,6 +1409,7 @@ class CoordinatorAgent:
 
         steps_trace.append(first_step_result)
         execution_results.append(first_step_result.get("result", ""))
+        set_trace()
 
         if not first_step_result.get("ok", False):
             set_trace(stop_reason="Initial directory inspection failed.")
@@ -1047,6 +1436,7 @@ class CoordinatorAgent:
                     "final_response": next_step.get("final_response", ""),
                 }
             )
+            set_trace()
 
             self._debug("ITERATIVE NEXT STEP", next_step)
 
@@ -1056,6 +1446,57 @@ class CoordinatorAgent:
 
             if status == "FINISH":
                 final_response = next_step.get("final_response", "").strip()
+                completion_issues = self._get_scaffold_completion_issues(
+                    prompt,
+                    steps_trace,
+                )
+
+                if completion_issues:
+                    feedback = (
+                        "Scaffold completion check failed. The project is not ready to finish yet. "
+                        "Missing required items:\n- "
+                        + "\n- ".join(completion_issues)
+                    )
+
+                    completion_check_failures += 1
+
+                    if completion_check_failures <= 2:
+                        observations.append(
+                            {
+                                "action": "completion_check",
+                                "input": "",
+                                "result": feedback,
+                            }
+                        )
+                        execution_results.append(feedback)
+                        steps_trace.append(
+                            {
+                                "ok": False,
+                                "action": "completion_check",
+                                "input": "",
+                                "resolved_input": "",
+                                "result": feedback,
+                                "verification": {
+                                    "ok": False,
+                                    "feedback": feedback,
+                                },
+                            }
+                        )
+                        planner_steps[-1]["completion_check"] = feedback
+                        self._debug("ITERATIVE COMPLETION CHECK", feedback)
+                        set_trace()
+                        continue
+
+                    set_trace(
+                        final_step=next_step,
+                        stop_reason="Scaffold completion check failed.",
+                        include_snapshot_top_level=True,
+                    )
+
+                    return user_stop_message(
+                        "I stopped because the project scaffold is still incomplete.",
+                        feedback,
+                    )
 
                 set_trace(final_step=next_step)
 
@@ -1103,6 +1544,7 @@ class CoordinatorAgent:
                             "repeated_input": action_input,
                         }
                     )
+                    set_trace()
 
                     self._debug("ITERATIVE RETRY AFTER REPETITION", retry_step)
 
@@ -1228,6 +1670,12 @@ class CoordinatorAgent:
 
                     steps_trace.append(step_result)
                     execution_results.append(step_result.get("result", ""))
+                    self._maybe_set_created_project_directory(
+                        prompt,
+                        forced_action,
+                        step_result,
+                    )
+                    set_trace()
 
                     if step_result.get("ok", False):
                         made_successful_write = True
@@ -1334,6 +1782,8 @@ class CoordinatorAgent:
 
             steps_trace.append(step_result)
             execution_results.append(step_result.get("result", ""))
+            self._maybe_set_created_project_directory(prompt, action, step_result)
+            set_trace()
 
             if step_result.get("ok", False) and self._is_write_action(action):
                 made_successful_write = True

@@ -4,6 +4,7 @@ from datetime import datetime
 
 
 class SQLiteMemoryStore:
+    """Persist and retrieve long-term memories with SQLite."""
     def __init__(self, db_path: str | Path = "babyclaw_memory.db"):
         """
         SQLite-backed long-term memory store.
@@ -16,6 +17,7 @@ class SQLiteMemoryStore:
 
 
     def _connect(self) -> sqlite3.Connection:
+        """Open a SQLite connection with row dictionaries enabled."""
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         return connection

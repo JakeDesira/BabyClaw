@@ -4,6 +4,7 @@ from .memory_store import SQLiteMemoryStore
 
 
 class MemoryAgent:
+    """Manage short-term state and SQLite-backed long-term memory."""
     def __init__(self, max_items: int = 10, memory_store: SQLiteMemoryStore | None = None):
         """
         Stores short-term conversational context for the current session.
@@ -106,26 +107,32 @@ class MemoryAgent:
 
 
     def get_last_active_file_name(self) -> str:
+        """Return last active file name."""
         return self.last_active_file_name
 
 
     def get_last_active_file_content(self) -> str:
+        """Return last active file content."""
         return self.last_active_file_content
 
 
     def get_last_active_file_type(self) -> str:
+        """Return last active file type."""
         return self.last_active_file_type
 
 
     def get_previous_active_file_name(self) -> str:
+        """Return previous active file name."""
         return self.previous_active_file_name
 
 
     def get_previous_active_file_content(self) -> str:
+        """Return previous active file content."""
         return self.previous_active_file_content
 
 
     def get_previous_active_file_type(self) -> str:
+        """Return previous active file type."""
         return self.previous_active_file_type
 
 
@@ -384,8 +391,8 @@ class MemoryAgent:
         )
 
         return self.memory_store.format_memories(memories)
-    
-        # ===== ACTIVE ACCESSIBLE PATH ====
+
+    # ===== ACTIVE ACCESSIBLE PATH ====
     def get_active_accessible_path(self) -> str:
         """
         Return the saved active/default workspace path.
@@ -407,9 +414,7 @@ class MemoryAgent:
 
 
     def handle(self, action: str, action_input: str = "") -> str:
-        """
-        Handle memory-related actions.
-        """
+        """Handle memory-related actions."""
         if action == "get_first_user_prompt":
             return self.get_first_user_prompt()
 

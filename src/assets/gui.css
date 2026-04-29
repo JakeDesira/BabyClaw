@@ -1,0 +1,346 @@
+.block-container {
+    max-width: 1040px;
+    padding-top: 2.25rem;
+    padding-bottom: 12rem;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* App header */
+.app-header {
+    margin-top: 0.3rem;
+    margin-bottom: 1.8rem;
+    text-align: center;
+}
+
+.app-title-main {
+    color: rgba(255, 255, 255, 0.18);
+    font-size: clamp(4.5rem, 10vw, 8.5rem);
+    font-weight: 900;
+    letter-spacing: -0.025em;
+    line-height: 0.95;
+    user-select: none;
+}
+
+.app-title-sub {
+    margin-top: 0.95rem;
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.model-pill {
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 0.42rem 0.85rem;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 0.78rem;
+}
+
+/* Hide Streamlit chrome */
+section[data-testid="stSidebar"] {
+    display: none;
+}
+
+div[data-testid="stDecoration"] {
+    display: none;
+}
+
+footer {
+    display: none;
+}
+
+header {
+    visibility: hidden;
+}
+
+/* Top tabs */
+div[data-testid="stTabs"] button {
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    padding: 0.8rem 1.05rem !important;
+}
+
+div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 0.35rem !important;
+}
+
+/* Empty chat spacing */
+.empty-chat-hero {
+    min-height: 32vh;
+}
+
+.bottom-spacer {
+    height: 11rem;
+}
+
+/* Native Streamlit chat input */
+div[data-testid="stChatInput"] {
+    position: fixed !important;
+    left: 50% !important;
+    bottom: 1.5rem !important;
+    transform: translateX(-50%) !important;
+    width: min(760px, calc(100vw - 3rem)) !important;
+    z-index: 100 !important;
+}
+
+div[data-testid="InputInstructions"] {
+    display: none !important;
+}
+
+/* Make room for settings + send button */
+div[data-testid="stChatInput"] textarea {
+    min-height: 48px !important;
+    max-height: 150px !important;
+    border-radius: 16px !important;
+    font-size: 0.95rem !important;
+    line-height: 1.4 !important;
+    padding-right: 7.8rem !important;
+}
+
+/* General buttons */
+div[data-testid="stButton"] button {
+    border-radius: 14px;
+    height: 48px;
+    min-width: 52px;
+    font-weight: 800;
+}
+
+div[data-testid="stButton"] button[kind="secondary"] {
+    min-width: 42px;
+}
+
+/* Chat messages */
+div[data-testid="stChatMessage"] {
+    padding: 1rem 1.15rem !important;
+    border-radius: 16px !important;
+}
+
+div[data-testid="stChatMessageAvatarUser"],
+div[data-testid="stChatMessageAvatarAssistant"] {
+    width: 2.45rem !important;
+    height: 2.45rem !important;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] {
+    line-height: 1.55;
+    font-size: 1.02rem;
+    font-weight: 450;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] p {
+    margin: 0.45rem 0 0.85rem 0;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] strong {
+    font-weight: 800;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] a {
+    color: #4da3ff;
+    text-decoration: none;
+    font-weight: 650;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] a:hover {
+    text-decoration: underline;
+}
+
+/* Markdown headings inside chat */
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] h1 {
+    font-size: 2rem;
+    line-height: 1.2;
+    margin: 1.4rem 0 1rem 0;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] h2 {
+    font-size: 1.55rem;
+    line-height: 1.25;
+    margin: 1.2rem 0 0.8rem 0;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] h3 {
+    font-size: 1.25rem;
+    line-height: 1.25;
+    margin: 1rem 0 0.65rem 0;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] li {
+    margin: 0.25rem 0;
+}
+
+/* Plain long outputs */
+.plain-message-output {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: inherit;
+    font-size: 1rem;
+    line-height: 1.55;
+}
+
+/* Better markdown table rendering inside chat */
+div[data-testid="stChatMessage"] table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.95rem;
+}
+
+div[data-testid="stChatMessage"] th,
+div[data-testid="stChatMessage"] td {
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    padding: 0.65rem 0.8rem;
+    vertical-align: top;
+}
+
+div[data-testid="stChatMessage"] th {
+    background: rgba(255, 255, 255, 0.045);
+    font-weight: 850;
+}
+
+div[data-testid="stChatMessage"] td {
+    background: rgba(255, 255, 255, 0.015);
+}
+
+/* Fake disabled input shown while BabyClaw is running */
+.working-input-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 1.5rem;
+    transform: translateX(-50%);
+    width: min(760px, calc(100vw - 3rem));
+    height: 64px;
+    border-radius: 16px;
+    background: rgb(38, 40, 51);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    z-index: 100;
+
+    display: flex;
+    align-items: center;
+
+    padding: 0 4.6rem 0 1.35rem;
+}
+
+.working-input-placeholder {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+/* Stop button while BabyClaw is running */
+button.babyclaw-stop-button {
+    position: fixed !important;
+    left: calc(50% + 320px) !important;
+    bottom: 2.04rem !important;
+    z-index: 300 !important;
+
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+
+    border-radius: 13px !important;
+    padding: 0 !important;
+
+    background: #ff3038 !important;
+    border: 1px solid #ff3038 !important;
+    color: white !important;
+
+    font-size: 0.85rem !important;
+    font-weight: 800 !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* Bottom-right scroll toggle */
+#babyclaw-scroll-toggle {
+    position: fixed;
+    right: 1.35rem;
+    bottom: 5.7rem;
+    z-index: 500;
+
+    width: 44px;
+    height: 44px;
+
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+
+    background: rgba(255, 126, 22, 0.94);
+    color: white;
+
+    font-size: 1.25rem;
+    font-weight: 900;
+    line-height: 1;
+
+    cursor: pointer;
+
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+#babyclaw-scroll-toggle:hover {
+    background: rgba(255, 143, 45, 0.98);
+}
+
+#babyclaw-scroll-toggle:active {
+    transform: translateY(1px);
+}
+
+button.babyclaw-reasoning-button {
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+
+    padding: 0 !important;
+    border-radius: 13px !important;
+
+    border: none !important;
+    background: rgba(255, 255, 255, 0.10) !important;
+    color: rgba(255, 255, 255, 0.72) !important;
+
+    font-size: 1rem !important;
+    font-weight: 900 !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    box-shadow: none !important;
+}
+
+button.babyclaw-reasoning-button:hover {
+    background: rgba(255, 255, 255, 0.14) !important;
+    color: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Make sure chat text does not go underneath gear + send */
+div[data-testid="stChatInput"] textarea {
+    padding-right: 7.8rem !important;
+}
+div[data-testid="stPopoverBody"] {
+    width: 155px !important;
+    min-width: 155px !important;
+    max-width: 155px !important;
+
+    padding: 0.85rem 1rem !important;
+    border-radius: 14px !important;
+}
+
+div[data-testid="stPopoverBody"] p {
+    margin-bottom: 0.55rem !important;
+    font-size: 0.85rem !important;
+    font-weight: 700 !important;
+    color: rgba(255, 255, 255, 0.55) !important;
+}
+
+div[data-testid="stPopoverBody"] label {
+    font-size: 0.9rem !important;
+    font-weight: 700 !important;
+}
+
+div[data-testid="stPopoverBody"] [role="radiogroup"] {
+    gap: 0.25rem !important;
+}

@@ -5,45 +5,19 @@ import json
 from ollama_client import OllamaClient
 import prompts
 import agents.executor.tools as tools
-
-
-WRITE_ACTIONS = {
-    "create_file",
-    "write_file",
-    "append_file",
-    "delete_file",
-    "edit_file",
-    "create_directory",
-    "move_path",
-    "move_directory_contents",
-    "copy_path",
-    "rename_path",
-}
-
-
-INSPECTION_ACTIONS = {
-    "list_directory",
-    "view_file",
-    "read_file",
-    "find_file",
-}
-
-
-SKIP_DIRECTORY_SUMMARY_DIRS = {
-    ".git",
-    ".venv",
-    "venv",
-    "__pycache__",
-    "node_modules",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".idea",
-    ".vscode",
-}
+from action_constants import (
+    EXECUTOR_ACTIONS,
+    ITERATIVE_ACTIONS,
+    PLANNER_INSPECTION_ACTIONS,
+    SKIP_SEARCH_DIRS,
+    WRITE_ACTIONS,
+)
 
 
 class PlannerAgent:
+    """Convert user requests into validated execution plans."""
     def __init__(self, memory=None, planning_model: str | None = None, filesystem_guard=None, reasoning_settings=None, debug: bool = True):
+        """Initialise the instance."""
         self.memory = memory
         self.debug = debug
         self.filesystem_guard = filesystem_guard
@@ -51,11 +25,13 @@ class PlannerAgent:
         self.planning_client = OllamaClient(model=planning_model)
 
     def _debug(self, label: str, value) -> None:
+        """Print a debug message when debug logging is enabled."""
         if self.debug:
             print(f"[PLANNER DEBUG] {label}: {value}")
 
     # ===== Context Helpers =====
     def _get_context(self) -> str:
+        """Return recent short-term context when memory is available."""
         if self.memory is None:
             return ""
 
@@ -65,6 +41,7 @@ class PlannerAgent:
             return ""
         
     def _get_approved_directories(self) -> list[str]:
+        """Return approved workspace directories from the filesystem guard."""
         if self.filesystem_guard is None:
             return []
         
@@ -72,10 +49,12 @@ class PlannerAgent:
     
 
     def _summarise_directory_tree(self, root: Path, max_depth: int = 3, max_entries: int = 100) -> str:
+        """Build a bounded recursive summary of a directory."""
         lines = []
         count = 0
 
         def walk(path: Path, depth: int) -> None:
+            """Recursively collect directory entries for a bounded summary."""
             nonlocal count
 
             if depth > max_depth or count >= max_entries:
@@ -99,7 +78,7 @@ class PlannerAgent:
                 lines.append(f"{kind} {relative}")
                 count += 1
 
-                if entry.is_dir() and entry.name not in SKIP_DIRECTORY_SUMMARY_DIRS:
+                if entry.is_dir() and entry.name not in SKIP_SEARCH_DIRS:
                     walk(entry, depth + 1)
 
         walk(root, 1)
@@ -108,6 +87,7 @@ class PlannerAgent:
     
 
     def _build_directory_context(self, approved_dirs: list[str]) -> str:
+        """Build directory context."""
         if not approved_dirs:
             return ""
 
@@ -129,6 +109,7 @@ class PlannerAgent:
     
     
     def _build_file_state_context(self) -> str:
+        """Build file state context."""
         if self.memory is None:
             return "No file currently active."
 
@@ -150,6 +131,7 @@ class PlannerAgent:
     
 
     def _build_files_context(self) -> str:
+        """Build files context."""
         available_files = tools.list_input_files()
 
         if not available_files:
@@ -159,6 +141,7 @@ class PlannerAgent:
 
 
     def _build_dirs_context(self, approved_dirs: list[str]) -> str:
+        """Build dirs context."""
         if not approved_dirs:
             return "No directories have been granted access yet."
 
@@ -185,6 +168,7 @@ class PlannerAgent:
     
     # ===== Parsing / Validation Helpers =====
     def _extract_json(self, text: str) -> str:
+        """Extract json."""
         cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         start = cleaned.find("{")
@@ -197,6 +181,7 @@ class PlannerAgent:
     
 
     def _fallback_plan(self, error_message: str) -> dict:
+        """Build a safe fallback plan after planner failure."""
         return {
             "plan_text": error_message,
             "needs_memory": False,
@@ -212,6 +197,7 @@ class PlannerAgent:
 
 
     def _parse_plan(self, raw_plan: str) -> dict:
+        """Parse plan."""
         try:
             json_text = self._extract_json(raw_plan)
             plan = json.loads(json_text)
@@ -224,27 +210,7 @@ class PlannerAgent:
     
 
     def _validate_plan(self, plan: dict) -> dict:
-        valid_executor_actions = {
-            "get_current_time",
-            "list_input_files",
-            "read_file",
-            "read_multiple_files",
-            "list_directory",
-            "view_file",
-            "find_file",
-            "run_python_file",
-            "create_file",
-            "write_file",
-            "append_file",
-            "delete_file",
-            "edit_file",
-            "create_directory",
-            "move_path",
-            "move_directory_contents",
-            "copy_path",
-            "rename_path",
-        }
-
+        """Validate plan."""
         valid_memory_actions = {
             "NONE",
             "get_first_user_prompt",
@@ -291,7 +257,7 @@ class PlannerAgent:
             action = str(item.get("action", "")).strip()
             action_input = str(item.get("input", "")).strip()
 
-            if action in valid_executor_actions:
+            if action in EXECUTOR_ACTIONS:
                 validated["executor_actions"].append({
                     "action": action,
                     "input": action_input,
@@ -314,24 +280,7 @@ class PlannerAgent:
     
 
     def _validate_next_step(self, step: dict) -> dict:
-        valid_actions = {
-            "NONE",
-            "list_directory",
-            "view_file",
-            "find_file",
-            "run_python_file",
-            "create_file",
-            "write_file",
-            "append_file",
-            "delete_file",
-            "edit_file",
-            "create_directory",
-            "move_path",
-            "move_directory_contents",
-            "copy_path",
-            "rename_path",
-        }
-
+        """Validate next step."""
         status = str(step.get("status", "FINISH")).upper()
         action = str(step.get("action", "NONE")).strip()
         action_input = str(step.get("input", "")).strip()
@@ -339,7 +288,7 @@ class PlannerAgent:
         if status not in {"CONTINUE", "FINISH"}:
             status = "FINISH"
 
-        if action not in valid_actions:
+        if action not in ITERATIVE_ACTIONS:
             action = "NONE"
 
         if status == "FINISH":
@@ -412,9 +361,10 @@ class PlannerAgent:
 
 
     def _find_first_matching_path(self, root: Path, file_name: str) -> Path | None:
+        """Return the first matching path under a root while skipping heavy folders."""
         try:
             for candidate in root.rglob(file_name):
-                if any(part in SKIP_DIRECTORY_SUMMARY_DIRS for part in candidate.parts):
+                if any(part in SKIP_SEARCH_DIRS for part in candidate.parts):
                     continue
 
                 if candidate.exists():
@@ -427,6 +377,7 @@ class PlannerAgent:
 
 
     def _resolve_relative_path(self, path_value: str, must_exist: bool = False) -> str:
+        """Resolve relative path."""
         path_value = path_value.strip().strip("'\"")
 
         if not path_value:
@@ -503,6 +454,7 @@ class PlannerAgent:
     
 
     def _input_file_exists(self, file_name: str) -> bool:
+        """Return whether an uploaded input file can be resolved."""
         try:
             return tools.find_file_in_input(file_name) is not None
         except Exception:
@@ -510,6 +462,7 @@ class PlannerAgent:
     
     
     def _looks_like_filesystem_path(self, value: str) -> bool:
+        """Return whether input resembles filesystem path."""
         value = value.strip()
 
         if not value:
@@ -530,28 +483,30 @@ class PlannerAgent:
     
 
     def _looks_like_placeholder(self, value: str) -> bool:
-        cleaned = value.strip().lower()
+        """Return True for short bracketed placeholder syntax."""
+        cleaned = value.strip()
 
         if not cleaned:
             return False
 
-        placeholder_markers = [
-            "content of",
-            "converted to",
-            "same content",
-            "same contents",
-            "placeholder",
-            "to be generated",
-        ]
+        if "\n" in cleaned:
+            return False
+
+        placeholder_pairs = {
+            "[": "]",
+            "{": "}",
+            "<": ">",
+        }
 
         return (
-            cleaned.startswith("[")
-            and cleaned.endswith("]")
-            and any(marker in cleaned for marker in placeholder_markers)
+            len(cleaned) >= 2
+            and cleaned[0] in placeholder_pairs
+            and cleaned[-1] == placeholder_pairs[cleaned[0]]
         )
     
 
     def _normalize_plan(self, plan: dict, prompt: str) -> dict:
+        """Normalise normalize plan."""
         lower_prompt = prompt.lower()
         executor_actions = plan.get("executor_actions", [])
         first_action = executor_actions[0]["action"] if executor_actions else "NONE"
@@ -634,6 +589,13 @@ class PlannerAgent:
                     item["action"] = "view_file"
                     item["input"] = action_input
 
+            if action == "delete_file":
+                candidate = self._resolve_relative_path(action_input, must_exist=True)
+
+                if Path(candidate).is_dir():
+                    item["action"] = "delete_directory"
+                    item["input"] = action_input
+
         plan["executor_actions"] = executor_actions
 
         if plan["needs_executor"] and not executor_actions:
@@ -712,7 +674,7 @@ class PlannerAgent:
         ]
 
         only_reading = executor_actions and all(
-            item.get("action") in INSPECTION_ACTIONS
+            item.get("action") in PLANNER_INSPECTION_ACTIONS
             for item in executor_actions
         )
 
@@ -813,6 +775,7 @@ class PlannerAgent:
     
 
     def create_next_step_after_repetition(self, original_prompt: str, observations: list[dict], repeated_action: str, repeated_input: str) -> dict:
+        """Create next step after repetition."""
         approved_dirs = self._get_approved_directories()
 
         observation_text_parts = []
@@ -884,6 +847,7 @@ class PlannerAgent:
 
     # ===== Public Planner Methods =====
     def create_plan(self, prompt: str, retrieved_memory_context: str = "") -> dict:
+        """Create plan."""
         approved_dirs = self._get_approved_directories()
 
         planner_user_prompt = (
@@ -917,6 +881,7 @@ class PlannerAgent:
     
     
     def create_next_step(self, original_prompt: str, observations: list[dict],  max_observation_chars: int = 12000) -> dict:
+        """Create next step."""
         approved_dirs = self._get_approved_directories()
 
         observation_text_parts = []

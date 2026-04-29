@@ -19,6 +19,7 @@ from .file_tools import (
 from .directory_tools import (
     list_directory,
     create_directory,
+    delete_directory,
     move_path,
     copy_path,
     rename_path,

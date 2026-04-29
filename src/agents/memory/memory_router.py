@@ -6,6 +6,7 @@ import prompts
 
 
 class MemoryRouter:
+    """Decide when long-term memory should be retrieved."""
     def __init__(self, model: str | None = None, reasoning_settings=None, debug: bool = True):
         """
         Decides whether the current user request would benefit from
@@ -22,11 +23,13 @@ class MemoryRouter:
 
 
     def _debug(self, label: str, value) -> None:
+        """Print a debug message when debug logging is enabled."""
         if self.debug:
             print(f"[MEMORY ROUTER DEBUG] {label}: {value}")
 
 
     def _extract_json(self, text: str) -> dict:
+        """Extract json."""
         cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         start = cleaned.find("{")
@@ -157,6 +160,7 @@ class MemoryRouter:
 
 
     def check(self, user_prompt: str, short_term_context: str = "") -> dict:
+        """Return the memory routing decision for a user prompt."""
         cleaned_prompt = user_prompt.strip()
 
         if not cleaned_prompt:
@@ -165,6 +169,28 @@ class MemoryRouter:
                 "search_query": "",
                 "reason": "Empty prompt.",
             }
+
+        looks_memory_related = self._looks_like_memory_request(cleaned_prompt)
+
+        if self._looks_like_file_or_code_task(cleaned_prompt) and not looks_memory_related:
+            normalised = {
+                "needs_memory": False,
+                "search_query": "",
+                "reason": "Skipped memory lookup for a filesystem/code task.",
+            }
+
+            self._debug("RULE-BASED MEMORY ROUTER RESULT", normalised)
+            return normalised
+
+        if not looks_memory_related:
+            normalised = {
+                "needs_memory": False,
+                "search_query": "",
+                "reason": "Skipped memory lookup because no memory-related wording was detected.",
+            }
+
+            self._debug("RULE-BASED MEMORY ROUTER RESULT", normalised)
+            return normalised
 
         user_message = (
             f"Recent conversation context:\n{short_term_context if short_term_context else 'None'}\n\n"

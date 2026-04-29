@@ -3,9 +3,11 @@ from dataclasses import dataclass
 
 @dataclass
 class ReasoningSettings:
+    """Runtime settings that tune model reasoning effort."""
     mode: str = "medium"
 
     def __post_init__(self):
+        """Normalise and validate dataclass state after initialisation."""
         self.mode = self.mode.lower().strip()
 
         if self.mode not in {"low", "medium", "high"}:
@@ -14,6 +16,7 @@ class ReasoningSettings:
 
     @property
     def planner_think(self) -> str:
+        """Return the reasoning effort for planner calls."""
         if self.mode == "low":
             return "low"
 
@@ -25,6 +28,7 @@ class ReasoningSettings:
 
     @property
     def response_think(self) -> str:
+        """Return the reasoning effort for response generation."""
         if self.mode == "low":
             return "low"
 
@@ -36,6 +40,7 @@ class ReasoningSettings:
 
     @property
     def memory_think(self) -> str:
+        """Return the reasoning effort for memory routing and writing."""
         if self.mode == "high":
             return "medium"
 
@@ -44,6 +49,7 @@ class ReasoningSettings:
 
     @property
     def reviewer_think(self) -> str:
+        """Return the reasoning effort for reviewer calls."""
         if self.mode == "low":
             return "low"
 
@@ -55,6 +61,7 @@ class ReasoningSettings:
 
     @property
     def max_iterations(self) -> int:
+        """Return the maximum planning iterations for the active mode."""
         if self.mode == "low":
             return 1
 
@@ -66,4 +73,5 @@ class ReasoningSettings:
 
     @property
     def allow_reviewer(self) -> bool:
+        """Return whether reviewer passes are enabled."""
         return self.mode in {"medium", "high"}

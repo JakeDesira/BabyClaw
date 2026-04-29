@@ -5,14 +5,16 @@ import shutil
 from multiprocessing import Process, Queue
 import streamlit.components.v1 as components
 from queue import Empty
+import re
 
 import streamlit as st
 
-from filesystem_guard import FilesystemGuard
+from backend_factory import build_backend as create_backend
 from reasoning_settings import ReasoningSettings
-import agents
-from paths import MEMORY_DB_PATH, MEDIA_INPUT_DIR
-from config import DEFAULT_PLANNING_MODEL, DEFAULT_REASONING_MODEL, BABYCLAW_DEBUG
+from paths import MEDIA_INPUT_DIR
+from config import DEFAULT_PLANNING_MODEL, DEFAULT_REASONING_MODEL
+
+ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 st.set_page_config(
     page_title="Baby Claw",
@@ -22,355 +24,30 @@ st.set_page_config(
 )
 
 
-CUSTOM_CSS = """
-<style>
-    .block-container {
-        max-width: 1040px;
-        padding-top: 2.25rem;
-        padding-bottom: 12rem;
-    }
+def load_asset(name: str) -> str:
+    """Load a GUI asset file from the local assets directory."""
+    return (ASSET_DIR / name).read_text(encoding="utf-8")
 
-    .app-header {
-        margin-top: 0.3rem;
-        margin-bottom: 1.8rem;
-        text-align: center;
-    }
 
-    .app-title-main {
-        color: rgba(255, 255, 255, 0.18);
-        font-size: clamp(4.5rem, 10vw, 8.5rem);
-        font-weight: 900;
-        letter-spacing: -0.025em;
-        line-height: 0.95;
-        user-select: none;
-    }
-
-    .app-title-sub {
-        margin-top: 0.95rem;
-        display: flex;
-        justify-content: center;
-        gap: 0.75rem;
-        flex-wrap: wrap;
-    }
-
-    .model-pill {
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 999px;
-        padding: 0.42rem 0.85rem;
-        background: rgba(255, 255, 255, 0.04);
-        color: rgba(255, 255, 255, 0.62);
-        font-size: 0.78rem;
-    }
-
-    .empty-chat-hero {
-        min-height: 32vh;
-    }
-
-    .bottom-spacer {
-        height: 11rem;
-    }
-
-    /* Reasoning selector: floating pill attached to chat input */
-    div[data-testid="stSelectbox"] {
-        position: fixed !important;
-        left: calc(50% - 380px) !important;
-        bottom: var(--babyclaw-reasoning-bottom, 6.25rem) !important;
-        transform: none !important;
-        width: 180px !important;
-        max-width: 180px !important;
-        z-index: 102 !important;
-    }
-
-    div[data-testid="stSelectbox"] label {
-        display: none !important;
-    }
-
-    div[data-testid="stSelectbox"] [data-baseweb="select"] > div {
-        min-height: 38px !important;
-        height: 38px !important;
-        border-radius: 999px !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        background: rgba(255, 255, 255, 0.055) !important;
-        box-shadow: none !important;
-    }
-
-    div[data-testid="stSelectbox"] [data-baseweb="select"] span {
-        font-size: 0.82rem !important;
-        font-weight: 700 !important;
-        color: rgba(255, 255, 255, 0.72) !important;
-    }
-
-    /* Native Streamlit chat input */
-    div[data-testid="stChatInput"] {
-        position: fixed !important;
-        left: 50% !important;
-        bottom: 1.5rem !important;
-        transform: translateX(-50%) !important;
-        width: min(760px, calc(100vw - 3rem)) !important;
-        z-index: 100 !important;
-    }
-
-    /* Hide Streamlit sidebar */
-    section[data-testid="stSidebar"] {
-        display: none;
-    }
-
-    /* Native Streamlit chat input: Enter sends, Shift+Enter creates newline */
-    div[data-testid="stChatInput"] {
-        position: fixed !important;
-        left: 50% !important;
-        bottom: 1.5rem !important;
-        transform: translateX(-50%) !important;
-        width: min(760px, calc(100vw - 3rem)) !important;
-        z-index: 100 !important;
-    }
-
-    div[data-testid="stChatInput"] textarea {
-        min-height: 48px !important;
-        max-height: 150px !important;
-        border-radius: 16px !important;
-        font-size: 0.95rem !important;
-        line-height: 1.4 !important;
-    }
-
-    div[data-testid="InputInstructions"] {
-        display: none !important;
-    }
-
-    /* Bigger top tabs */
-    div[data-testid="stTabs"] button {
-        font-size: 1.15rem !important;
-        font-weight: 700 !important;
-        padding: 0.8rem 1.05rem !important;
-    }
-
-    div[data-testid="stTabs"] [data-baseweb="tab-list"] {
-        gap: 0.35rem !important;
-    }
-
-    /* General buttons */
-    div[data-testid="stButton"] button {
-        border-radius: 14px;
-        height: 48px;
-        min-width: 52px;
-        font-weight: 800;
-    }
-
-    /* Bigger chat messages */
-    div[data-testid="stChatMessage"] {
-        padding: 0.9rem 1.1rem !important;
-        border-radius: 15px !important;
-    }
-
-    .message-text {
-        line-height: 1.55;
-        font-size: 1.02rem;
-        font-weight: 450;
-    }
-
-    .message-text p {
-        margin: 0.45rem 0 0.85rem 0;
-    }
-
-    .message-text strong {
-        font-weight: 800;
-    }
-
-    .message-text a {
-        color: #4da3ff;
-        text-decoration: none;
-        font-weight: 650;
-    }
-
-    .message-text a:hover {
-        text-decoration: underline;
-    }
-
-    div[data-testid="stChatMessage"] {
-        padding: 1rem 1.15rem !important;
-        border-radius: 16px !important;
-    }
-
-    div[data-testid="stChatMessageAvatarUser"],
-    div[data-testid="stChatMessageAvatarAssistant"] {
-        width: 2.45rem !important;
-        height: 2.45rem !important;
-    }
-
-    /* Clean Streamlit chrome */
-    div[data-testid="stDecoration"] {
-        display: none;
-    }
-
-    footer {
-        display: none;
-    }
-
-    header {
-        visibility: hidden;
-    }
-
-    /* Fake disabled input shown while agent is running */
-    .working-input-bar {
-        position: fixed;
-        left: 50%;
-        bottom: 1.5rem;
-        transform: translateX(-50%);
-        width: min(760px, calc(100vw - 3rem));
-        height: 64px;
-        border-radius: 16px;
-        background: rgb(38, 40, 51);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        z-index: 100;
-        display: flex;
-        align-items: center;
-        padding: 0 4.6rem 0 1.35rem;
-    }
-
-    .working-input-placeholder {
-        color: rgba(255, 255, 255, 0.45);
-        font-size: 0.95rem;
-        font-weight: 600;
-    }
-
-    button.babyclaw-stop-button {
-        position: fixed !important;
-        left: calc(50% + 320px) !important;
-        bottom: 2.15rem !important;
-        z-index: 300 !important;
-
-        width: 42px !important;
-        height: 42px !important;
-        min-width: 42px !important;
-
-        border-radius: 13px !important;
-        padding: 0 !important;
-
-        background: #ff3038 !important;
-        border: 1px solid #ff3038 !important;
-        color: white !important;
-
-        font-size: 0.9rem !important;
-        font-weight: 800 !important;
-
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-    }
-
-    /* Small delete buttons in file/workspace rows */
-    div[data-testid="stButton"] button[kind="secondary"] {
-        min-width: 42px;
-    }
-</style>
-"""
+def render_gui_assets() -> None:
+    """Render CSS and JavaScript assets used by the Streamlit GUI."""
+    st.markdown(f"<style>{load_asset('gui.css')}</style>", unsafe_allow_html=True)
+    components.html(
+        f"<script>{load_asset('gui.js')}</script>",
+        height=0,
+        width=0,
+    )
 
 
 def build_backend(reasoning_mode: str):
-    debug = BABYCLAW_DEBUG
-
-    reasoning_settings = ReasoningSettings(mode=reasoning_mode)
-
-    filesystem_guard = FilesystemGuard()
-
-    transaction_manager = agents.TransactionManager(
-        filesystem_guard=filesystem_guard,
-        snapshot_root=Path.home() / ".babyclaw_snapshots",
+    """Build the shared BabyClaw backend object graph."""
+    return create_backend(
+        reasoning_settings=ReasoningSettings(mode=reasoning_mode),
     )
-
-    execution_verifier = agents.ExecutionVerifier(
-        filesystem_guard=filesystem_guard,
-        debug=debug,
-    )
-
-    memory_store = agents.SQLiteMemoryStore(MEMORY_DB_PATH)
-    memory = agents.MemoryAgent(memory_store=memory_store)
-
-    saved_paths = memory.get_saved_accessible_path_values()
-
-    for saved_path in saved_paths:
-        filesystem_guard.approve(saved_path)
-
-    saved_active_path = memory.get_active_accessible_path()
-
-    if saved_active_path:
-        filesystem_guard.set_active_directory(saved_active_path)
-
-    memory_writer = agents.MemoryWriter(
-        model=DEFAULT_PLANNING_MODEL,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    memory_router = agents.MemoryRouter(
-        model=DEFAULT_PLANNING_MODEL,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    executor = agents.ExecutorAgent(
-        memory=memory,
-        filesystem_guard=filesystem_guard,
-        debug=debug,
-    )
-
-    response_generator = agents.ResponseGenerator(
-        memory=memory,
-        reasoning_model=DEFAULT_REASONING_MODEL,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    plan_executor = agents.PlanExecutor(
-        memory=memory,
-        executor=executor,
-        filesystem_guard=filesystem_guard,
-        response_generator=response_generator,
-        execution_verifier=execution_verifier,
-        transaction_manager=transaction_manager,
-        debug=debug,
-    )
-
-    reviewer = agents.ReviewerAgent(
-        model=DEFAULT_REASONING_MODEL,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    planner = agents.PlannerAgent(
-        memory=memory,
-        planning_model=DEFAULT_PLANNING_MODEL,
-        filesystem_guard=filesystem_guard,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    coordinator = agents.CoordinatorAgent(
-        planner=planner,
-        plan_executor=plan_executor,
-        response_generator=response_generator,
-        reviewer=reviewer,
-        memory=memory,
-        model=DEFAULT_PLANNING_MODEL,
-        memory_router=memory_router,
-        memory_writer=memory_writer,
-        reasoning_settings=reasoning_settings,
-        debug=debug,
-    )
-
-    return {
-        "reasoning_settings": reasoning_settings,
-        "filesystem_guard": filesystem_guard,
-        "transaction_manager": transaction_manager,
-        "memory": memory,
-        "coordinator": coordinator,
-        "plan_executor": plan_executor,
-        "planner": planner,
-        "response_generator": response_generator,
-    }
 
 
 def initialise_state():
+    """Initialise state."""
     if "reasoning_mode" not in st.session_state:
         st.session_state.reasoning_mode = "medium"
 
@@ -412,6 +89,7 @@ def initialise_state():
 
 
 def get_model_labels() -> tuple[str, str]:
+    """Return model labels."""
     backend = st.session_state.backend
 
     planning_model = DEFAULT_PLANNING_MODEL
@@ -431,6 +109,7 @@ def get_model_labels() -> tuple[str, str]:
 
 
 def rebuild_backend_if_mode_changed(selected_mode: str):
+    """Rebuild backend if mode changed."""
     if selected_mode != st.session_state.reasoning_mode:
         old_backend = st.session_state.backend
 
@@ -451,6 +130,7 @@ def run_agent_task(
     active_directory: str,
     result_queue: Queue,
 ):
+    """Run agent task."""
     try:
         backend = build_backend(reasoning_mode)
 
@@ -465,11 +145,28 @@ def run_agent_task(
 
         coordinator = backend["coordinator"]
 
+        def publish_trace(trace: dict) -> None:
+            """Send a live trace snapshot back to the GUI process."""
+            result_queue.put(
+                {
+                    "type": "trace",
+                    "ok": True,
+                    "task_id": task_id,
+                    "trace": shrink_trace_for_gui(trace),
+                }
+            )
+
+        try:
+            coordinator.set_trace_callback(publish_trace)
+        except AttributeError:
+            pass
+
         reply = coordinator.handle(prompt)
         trace = shrink_trace_for_gui(getattr(coordinator, "last_trace", {}))
 
         result_queue.put(
             {
+                "type": "result",
                 "ok": True,
                 "task_id": task_id,
                 "reply": reply,
@@ -480,103 +177,17 @@ def run_agent_task(
     except Exception as e:
         result_queue.put(
             {
+                "type": "result",
                 "ok": False,
                 "task_id": task_id,
                 "reply": f"Error while running task: {e}",
                 "trace": {},
             }
         )
-def apply_reasoning_pill_follow_script():
-    components.html(
-        """
-        <script>
-            function updateReasoningPillPosition() {
-                const doc = window.parent.document;
 
-                const chatInput = doc.querySelector('div[data-testid="stChatInput"]');
-                const workingInput = doc.querySelector(".working-input-bar");
-
-                let inputElement = chatInput;
-
-                if (!inputElement && workingInput) {
-                    inputElement = workingInput;
-                }
-
-                if (!inputElement) {
-                    doc.documentElement.style.setProperty(
-                        "--babyclaw-reasoning-bottom",
-                        "6.25rem"
-                    );
-                    return;
-                }
-
-                const rect = inputElement.getBoundingClientRect();
-                const viewportHeight = window.parent.innerHeight;
-
-                const distanceFromBottom = viewportHeight - rect.top;
-                const extraGap = 14;
-
-                const newBottom = distanceFromBottom + extraGap;
-
-                doc.documentElement.style.setProperty(
-                    "--babyclaw-reasoning-bottom",
-                    newBottom + "px"
-                );
-            }
-
-            if (!window.parent.__babyclawReasoningPillInterval) {
-                window.parent.__babyclawReasoningPillInterval = setInterval(
-                    updateReasoningPillPosition,
-                    150
-                );
-            }
-
-            updateReasoningPillPosition();
-            setTimeout(updateReasoningPillPosition, 50);
-            setTimeout(updateReasoningPillPosition, 150);
-            setTimeout(updateReasoningPillPosition, 300);
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
-
-def apply_stop_button_script():
-    components.html(
-        """
-        <script>
-            function styleStopButton() {
-                const buttons = window.parent.document.querySelectorAll("button");
-
-                buttons.forEach((button) => {
-                    if (button.innerText.trim() === "■") {
-                        button.classList.add("babyclaw-stop-button");
-
-                        const wrapper = button.closest('div[data-testid="stButton"]');
-
-                        if (wrapper) {
-                            wrapper.style.position = "fixed";
-                            wrapper.style.left = "calc(50% + 320px)";
-                            wrapper.style.bottom = "2.15rem";
-                            wrapper.style.zIndex = "300";
-                            wrapper.style.width = "42px";
-                            wrapper.style.height = "42px";
-                        }
-                    }
-                });
-            }
-
-            styleStopButton();
-            setTimeout(styleStopButton, 50);
-            setTimeout(styleStopButton, 150);
-            setTimeout(styleStopButton, 300);
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
 
 def cancel_current_task():
+    """Cancel current task."""
     current_task = st.session_state.current_task
 
     if not current_task:
@@ -596,18 +207,46 @@ def cancel_current_task():
     st.session_state.task_result_queue = None
 
     st.session_state.messages.append(
-    {
-        "role": "assistant",
-        "content": (
-            "Task stopped. Any files changed during this task may still exist. "
-            "Use 'Undo last filesystem change' in the Workspace tab to restore the project "
-            "to how it was before this task started."
-        ),
-    }
-)
+        {
+            "role": "assistant",
+            "content": (
+                "Task stopped. Any files changed during this task may still exist. "
+                "Use 'Undo last filesystem change' in the Workspace tab to restore the project "
+                "to how it was before this task started."
+            ),
+        }
+    )
+
+
+def handle_task_queue_event(event: dict, current_task: dict) -> dict | None:
+    """Apply an interim task event and return a final result event when present."""
+    if not isinstance(event, dict):
+        return {
+            "ok": False,
+            "reply": "Error reading task result: task returned a non-dictionary event.",
+            "trace": {},
+        }
+
+    event_task_id = event.get("task_id")
+    current_task_id = current_task.get("id")
+
+    if event_task_id is not None and event_task_id != current_task_id:
+        return None
+
+    if event.get("type") == "trace":
+        trace = event.get("trace", {})
+
+        if trace:
+            st.session_state.last_trace = trace
+            restore_snapshot_reference_from_trace(trace)
+
+        return None
+
+    return event
 
 
 def collect_finished_task():
+    """Collect finished task."""
     current_task = st.session_state.current_task
     result_queue = st.session_state.task_result_queue
 
@@ -618,16 +257,24 @@ def collect_finished_task():
 
     result = None
 
-    try:
-        result = result_queue.get_nowait()
-    except Empty:
-        result = None
-    except Exception as e:
-        result = {
-            "ok": False,
-            "reply": f"Error reading task result: {e}",
-            "trace": {},
-        }
+    while True:
+        try:
+            event = result_queue.get_nowait()
+        except Empty:
+            break
+        except Exception as e:
+            result = {
+                "ok": False,
+                "reply": f"Error reading task result: {e}",
+                "trace": {},
+            }
+            break
+
+        possible_result = handle_task_queue_event(event, current_task)
+
+        if possible_result is not None:
+            result = possible_result
+            break
 
     if result is None:
         if process.is_alive():
@@ -635,16 +282,24 @@ def collect_finished_task():
 
         process.join(timeout=1)
 
-        try:
-            result = result_queue.get(timeout=0.2)
-        except Empty:
-            result = None
-        except Exception as e:
-            result = {
-                "ok": False,
-                "reply": f"Error reading task result after process ended: {e}",
-                "trace": {},
-            }
+        while True:
+            try:
+                event = result_queue.get(timeout=0.2)
+            except Empty:
+                break
+            except Exception as e:
+                result = {
+                    "ok": False,
+                    "reply": f"Error reading task result after process ended: {e}",
+                    "trace": {},
+                }
+                break
+
+            possible_result = handle_task_queue_event(event, current_task)
+
+            if possible_result is not None:
+                result = possible_result
+                break
 
     if result is None:
         st.session_state.current_task = None
@@ -694,6 +349,7 @@ def collect_finished_task():
     
 
 def render_header():
+    """Render header."""
     planning_model, reasoning_model = get_model_labels()
 
     st.markdown(
@@ -710,24 +366,103 @@ def render_header():
     )
 
 
+def normalise_latex_for_streamlit(text: str) -> str:
+    """Convert common LLM LaTeX patterns into Streamlit-friendly markdown math."""
+    cleaned = text
+
+    # Convert \( ... \) to $ ... $
+    cleaned = re.sub(
+        r"\\\((.*?)\\\)",
+        r"$\1$",
+        cleaned,
+        flags=re.DOTALL,
+    )
+
+    # Convert \[ ... \] to $$ ... $$
+    cleaned = re.sub(
+        r"\\\[(.*?)\\\]",
+        r"\n\n$$\n\1\n$$\n\n",
+        cleaned,
+        flags=re.DOTALL,
+    )
+
+    # Convert standalone [ formula ] blocks into $$ formula $$,
+    # but only when the bracket content looks like LaTeX/math.
+    def replace_square_math(match):
+        inner = match.group(1).strip()
+
+        math_markers = (
+            "\\frac",
+            "\\sum",
+            "\\theta",
+            "\\hat",
+            "\\text",
+            "_",
+            "^",
+            "\\log",
+            "\\in",
+            "\\rightarrow",
+        )
+
+        if any(marker in inner for marker in math_markers):
+            return f"\n\n$$\n{inner}\n$$\n\n"
+
+        return match.group(0)
+
+    cleaned = re.sub(
+        r"\[\s*([^\[\]]{8,300})\s*\]",
+        replace_square_math,
+        cleaned,
+    )
+
+    return cleaned
+
+
 def render_message_text(content: str):
-    st.markdown(
-        """
-        <div class="message-text">
-        """,
-        unsafe_allow_html=True,
+    """Render message text while preserving markdown and LaTeX."""
+    content_text = str(content or "").strip()
+
+    if not content_text:
+        return
+
+    content_text = normalise_latex_for_streamlit(content_text)
+
+    has_markdown_or_latex = any(
+        marker in content_text
+        for marker in (
+            "```",
+            "# ",
+            "## ",
+            "### ",
+            "- ",
+            "* ",
+            "1. ",
+            "|",
+            "$",
+            "$$",
+            "\\frac",
+            "\\sum",
+            "\\theta",
+            "\\hat",
+            "\\in",
+            "\\rightarrow",
+        )
     )
 
-    st.markdown(content)
+    lines = [line for line in content_text.splitlines() if line.strip()]
 
-    st.markdown(
-        """
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    if len(lines) >= 8 and not has_markdown_or_latex:
+        st.markdown(
+            f'<pre class="plain-message-output">{html.escape(content_text)}</pre>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.markdown(content_text)
+
 
 def shorten_text(value, max_chars: int = 4000):
+    """Shorten text."""
     if not isinstance(value, str):
         return value
 
@@ -738,6 +473,7 @@ def shorten_text(value, max_chars: int = 4000):
 
 
 def shrink_step_for_gui(step: dict) -> dict:
+    """Shrink step for gui."""
     if not isinstance(step, dict):
         return {}
 
@@ -761,6 +497,7 @@ def shrink_step_for_gui(step: dict) -> dict:
 
 
 def shrink_trace_for_gui(trace: dict) -> dict:
+    """Shrink trace for gui."""
     if not isinstance(trace, dict):
         return {}
 
@@ -821,11 +558,17 @@ def shrink_trace_for_gui(trace: dict) -> dict:
 
 
 def start_agent_task(prompt: str):
+    """Start agent task."""
     st.session_state.current_task_id += 1
     task_id = st.session_state.current_task_id
 
     st.session_state.last_snapshot_path = ""
     st.session_state.last_snapshot_target = ""
+    st.session_state.last_trace = {
+        "status": "Task started",
+        "prompt": prompt,
+        "steps": [],
+    }
 
     filesystem_guard = st.session_state.backend["filesystem_guard"]
     transaction_manager = st.session_state.backend["transaction_manager"]
@@ -877,6 +620,7 @@ def start_agent_task(prompt: str):
 
 
 def render_workspace_tab():
+    """Render workspace tab."""
     backend = st.session_state.backend
     filesystem_guard = backend["filesystem_guard"]
     memory = backend["memory"]
@@ -1050,6 +794,7 @@ def restore_snapshot_reference_from_trace(trace: dict) -> None:
 
 
 def undo_last_filesystem_change() -> str:
+    """Undo last filesystem change."""
     snapshot_path_value = st.session_state.get("last_snapshot_path", "")
     target_path_value = st.session_state.get("last_snapshot_target", "")
 
@@ -1112,6 +857,7 @@ def undo_last_filesystem_change() -> str:
         return f"Undo failed safely. Original project was not intentionally deleted. Error: {e}"
 
 def render_files_tab():
+    """Render files tab."""
     st.subheader("Input files")
     st.caption("Upload files here so BabyClaw can read them from the media input directory.")
 
@@ -1208,6 +954,7 @@ def render_files_tab():
 
 
 def render_memory_tab():
+    """Render memory tab."""
     backend = st.session_state.backend
     memory = backend["memory"]
 
@@ -1256,7 +1003,116 @@ def render_memory_tab():
     if st.session_state.memory_delete_result:
         st.info(st.session_state.memory_delete_result)
 
+
+def apply_reasoning_pill_follow_script():
+    components.html(
+        """
+        <script>
+            function positionReasoningButton() {
+                const doc = window.parent.document;
+
+                const chatInput = doc.querySelector('div[data-testid="stChatInput"]');
+
+                if (!chatInput) {
+                    return;
+                }
+
+                const buttons = Array.from(doc.querySelectorAll("button"));
+
+                const gearButton = buttons.find((button) => {
+                    return button.innerText.includes("⚙");
+                });
+
+                if (!gearButton) {
+                    return;
+                }
+
+                const wrapper =
+                    gearButton.closest('div[data-testid="stPopover"]') ||
+                    gearButton.closest('div[data-testid="stButton"]') ||
+                    gearButton.parentElement;
+
+                if (!wrapper) {
+                    return;
+                }
+
+                const chatRect = chatInput.getBoundingClientRect();
+
+                const size = 42;
+                const gapFromRightEdge = 68;
+                const gapFromBottom = 12;
+
+                wrapper.style.position = "fixed";
+                wrapper.style.left = (chatRect.right - gapFromRightEdge - size) + "px";
+                wrapper.style.top = (chatRect.bottom - gapFromBottom - size) + "px";
+                wrapper.style.width = size + "px";
+                wrapper.style.height = size + "px";
+                wrapper.style.zIndex = "260";
+                wrapper.style.margin = "0";
+                wrapper.style.padding = "0";
+                wrapper.style.transform = "none";
+
+                gearButton.classList.add("babyclaw-reasoning-button");
+            }
+
+            if (window.parent.__babyclawReasoningButtonInterval) {
+                clearInterval(window.parent.__babyclawReasoningButtonInterval);
+            }
+
+            window.parent.__babyclawReasoningButtonInterval = setInterval(
+                positionReasoningButton,
+                150
+            );
+
+            positionReasoningButton();
+            setTimeout(positionReasoningButton, 50);
+            setTimeout(positionReasoningButton, 150);
+            setTimeout(positionReasoningButton, 300);
+            setTimeout(positionReasoningButton, 700);
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+def apply_stop_button_script():
+    components.html(
+        """
+        <script>
+            function styleStopButton() {
+                const buttons = window.parent.document.querySelectorAll("button");
+
+                buttons.forEach((button) => {
+                    if (button.innerText.trim() === "■") {
+                        button.classList.add("babyclaw-stop-button");
+
+                        const wrapper = button.closest('div[data-testid="stButton"]');
+
+                        if (wrapper) {
+                            wrapper.style.position = "fixed";
+                            wrapper.style.left = "calc(50% + 320px)";
+                            wrapper.style.bottom = "2.15rem";
+                            wrapper.style.zIndex = "300";
+                            wrapper.style.width = "42px";
+                            wrapper.style.height = "42px";
+                        }
+                    }
+                });
+            }
+
+            styleStopButton();
+            setTimeout(styleStopButton, 50);
+            setTimeout(styleStopButton, 150);
+            setTimeout(styleStopButton, 300);
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def render_working_input_bar():
+    """Render fake input bar while the agent is running."""
     clicked = st.button(
         "■",
         key="stop_inside_input",
@@ -1280,8 +1136,7 @@ def render_working_input_bar():
 
 
 def render_chat_tab():
-    collect_finished_task()
-
+    """Render chat tab."""
     current_task = st.session_state.current_task
     task_is_running = current_task is not None
 
@@ -1298,27 +1153,31 @@ def render_chat_tab():
 
     st.markdown('<div class="bottom-spacer"></div>', unsafe_allow_html=True)
 
-
-    selected_mode = st.selectbox(
-        "Reasoning mode",
-        options=["low", "medium", "high"],
-        index=["low", "medium", "high"].index(st.session_state.reasoning_mode),
-        format_func=lambda value: {
-            "low": "Low Thinking",
-            "medium": "Medium Thinking",
-            "high": "High Thinking",
-        }[value],
-        label_visibility="collapsed",
-        disabled=task_is_running,
-    )
-
     if task_is_running:
         render_working_input_bar()
     else:
+        with st.popover("⚙", use_container_width=False):
+            st.caption("Thinking")
+
+            selected_mode = st.radio(
+                "Reasoning mode",
+                options=["low", "medium", "high"],
+                index=["low", "medium", "high"].index(st.session_state.reasoning_mode),
+                format_func=lambda value: {
+                    "low": "Low",
+                    "medium": "Medium",
+                    "high": "High",
+                }[value],
+                label_visibility="collapsed",
+                key="reasoning_mode_radio",
+            )
+
         rebuild_backend_if_mode_changed(selected_mode)
         st.session_state.backend["reasoning_settings"].mode = st.session_state.reasoning_mode
 
         user_prompt = st.chat_input("Ask anything")
+
+        apply_reasoning_pill_follow_script()
 
         if user_prompt:
             cleaned_prompt = user_prompt.strip()
@@ -1327,14 +1186,10 @@ def render_chat_tab():
                 start_agent_task(cleaned_prompt)
                 st.rerun()
 
-    apply_reasoning_pill_follow_script()
-
-    if task_is_running:
-        time.sleep(0.4)
-        st.rerun()
 
 
 def render_debug_tab():
+    """Render debug tab."""
     trace = st.session_state.last_trace or {}
 
     st.subheader("Agent internals")
@@ -1428,7 +1283,11 @@ def render_debug_tab():
 
 
 def render_app():
-    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+    """Render app."""
+    render_gui_assets()
+
+    # Collect live trace/result events before rendering any tab.
+    collect_finished_task()
 
     render_header()
 
@@ -1457,8 +1316,14 @@ def render_app():
     with debug_tab:
         render_debug_tab()
 
+    # Keep polling while a child agent process is running.
+    if st.session_state.current_task is not None:
+        time.sleep(0.4)
+        st.rerun()
+
 
 def main():
+    """Run the module entry point."""
     initialise_state()
     render_app()
 

@@ -5,23 +5,12 @@ from pathlib import Path
 from pypdf import PdfReader
 
 
+from action_constants import SKIP_SEARCH_DIRS
 from paths import MEDIA_INPUT_DIR
 
 
 INPUT_DIR = MEDIA_INPUT_DIR
 TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".py", ".html", ".css", ".js"}
-
-SKIP_SEARCH_DIRS = {
-    ".git",
-    ".venv",
-    "venv",
-    "__pycache__",
-    "node_modules",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".idea",
-    ".vscode",
-}
 
 
 def list_input_files() -> list[str]:
