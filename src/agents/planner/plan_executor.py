@@ -278,6 +278,9 @@ class PlanExecutor:
             content = parts[1]
             return f"{filepath}::{content}"
 
+        if Path(filepath).name == "__init__.py":
+            return f"{filepath}::"
+
         if self.response_generator is None:
             raise ValueError("ResponseGenerator is required for create_file actions.")
 

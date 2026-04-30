@@ -1,5 +1,8 @@
 from pathlib import Path
 import html
+import logging
+import sys
+import traceback
 import time
 import shutil
 from multiprocessing import Process, Queue
@@ -11,10 +14,12 @@ import streamlit as st
 
 from backend_factory import build_backend as create_backend
 from reasoning_settings import ReasoningSettings
-from paths import MEDIA_INPUT_DIR
+from paths import MEDIA_INPUT_DIR, PROJECT_ROOT
 from config import DEFAULT_PLANNING_MODEL, DEFAULT_REASONING_MODEL
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
+STREAMLIT_LOG_PATH = PROJECT_ROOT / "babyclaw_streamlit.log"
+_STD_STREAM_LOG = None
 
 st.set_page_config(
     page_title="Baby Claw",
@@ -27,6 +32,44 @@ st.set_page_config(
 def load_asset(name: str) -> str:
     """Load a GUI asset file from the local assets directory."""
     return (ASSET_DIR / name).read_text(encoding="utf-8")
+
+
+def stream_is_usable(stream) -> bool:
+    """Return whether a standard stream can be flushed safely."""
+    try:
+        stream.flush()
+        return True
+    except Exception:
+        return False
+
+
+def ensure_valid_std_streams() -> None:
+    """Redirect broken standard streams before multiprocessing flushes them."""
+    global _STD_STREAM_LOG
+
+    stdout_is_usable = stream_is_usable(sys.stdout)
+    stderr_is_usable = stream_is_usable(sys.stderr)
+
+    if stdout_is_usable and stderr_is_usable:
+        return
+
+    if _STD_STREAM_LOG is None or _STD_STREAM_LOG.closed:
+        _STD_STREAM_LOG = STREAMLIT_LOG_PATH.open("a", encoding="utf-8")
+
+    if not stdout_is_usable:
+        sys.stdout = _STD_STREAM_LOG
+
+    if not stderr_is_usable:
+        sys.stderr = _STD_STREAM_LOG
+
+    for logger_name in ("", "streamlit"):
+        logger = logging.getLogger(logger_name)
+
+        for handler in logger.handlers:
+            stream = getattr(handler, "stream", None)
+
+            if stream is not None and not stream_is_usable(stream):
+                handler.stream = _STD_STREAM_LOG
 
 
 def render_gui_assets() -> None:
@@ -194,7 +237,10 @@ def run_agent_task(
                 "type": "result",
                 "ok": False,
                 "task_id": task_id,
-                "reply": f"Error while running task: {e}",
+                "reply": (
+                    f"Error while running task: {e}\n\n"
+                    f"{traceback.format_exc()}"
+                ),
                 "trace": {},
             }
         )
@@ -328,7 +374,11 @@ def collect_finished_task():
         st.session_state.messages.append(
             {
                 "role": "assistant",
-                "content": "Task ended without returning a result.",
+                "content": (
+                    "Task ended without returning a result.\n\n"
+                    f"Child process exit code: {process.exitcode}\n"
+                    f"Check Streamlit logs: {STREAMLIT_LOG_PATH}"
+                ),
             }
         )
         return
@@ -614,6 +664,8 @@ def start_agent_task(prompt: str):
             "content": prompt,
         }
     )
+
+    ensure_valid_std_streams()
 
     result_queue = Queue()
 
@@ -1306,6 +1358,7 @@ def render_debug_tab():
 
 def render_app():
     """Render app."""
+    ensure_valid_std_streams()
     render_gui_assets()
 
     # Collect live trace/result events before rendering any tab.

@@ -1076,8 +1076,6 @@ class CoordinatorAgent:
             is_simple = False
         elif self._looks_like_direct_writing_task(prompt):
             is_simple = True
-        elif len(prompt) > 500:
-            is_simple = False
         elif self._is_short_follow_up(prompt) and self._get_short_term_context():
             is_simple = False
         else:
@@ -1189,6 +1187,13 @@ class CoordinatorAgent:
 
             elif response_mode == "ANSWER":
                 combined_context_parts = []
+                short_term_context = self._get_short_term_context()
+
+                if short_term_context:
+                    combined_context_parts.append(
+                        "Recent conversation context:\n"
+                        + short_term_context
+                    )
 
                 if long_term_memory_context:
                     combined_context_parts.append(

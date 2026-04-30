@@ -2,6 +2,7 @@
 __pycache__/
 media_input/*
 .DS_Store
+babyclaw_streamlit.log
 src/agents/memory/*.db
 src/agents/memory/*.db-shm
 src/agents/memory/*.db-wal

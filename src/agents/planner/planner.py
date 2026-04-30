@@ -855,6 +855,10 @@ class PlannerAgent:
     def create_next_step_after_repetition(self, original_prompt: str, observations: list[dict], repeated_action: str, repeated_input: str) -> dict:
         """Create next step after repetition."""
         approved_dirs = self._get_approved_directories()
+        recent_context = self._get_context()
+
+        if len(recent_context) > 8000:
+            recent_context = recent_context[-8000:]
 
         observation_text_parts = []
 
@@ -874,6 +878,8 @@ class PlannerAgent:
         )
 
         planner_user_prompt = (
+            f"Recent conversation context:\n"
+            f"{recent_context if recent_context else 'None'}\n\n"
             f"User goal:\n{original_prompt}\n\n"
             f"{self._build_dirs_context(approved_dirs)}\n\n"
             f"Current approved directory context:\n"
@@ -965,6 +971,10 @@ class PlannerAgent:
     def create_next_step(self, original_prompt: str, observations: list[dict],  max_observation_chars: int = 12000) -> dict:
         """Create next step."""
         approved_dirs = self._get_approved_directories()
+        recent_context = self._get_context()
+
+        if len(recent_context) > 8000:
+            recent_context = recent_context[-8000:]
 
         observation_text_parts = []
 
@@ -987,6 +997,8 @@ class PlannerAgent:
             observation_text = observation_text[-max_observation_chars:]
 
         planner_user_prompt = (
+            f"Recent conversation context:\n"
+            f"{recent_context if recent_context else 'None'}\n\n"
             f"User goal:\n{original_prompt}\n\n"
             f"{self._build_dirs_context(approved_dirs)}\n\n"
             f"Current approved directory context:\n"
