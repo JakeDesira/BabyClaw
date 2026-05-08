@@ -120,7 +120,7 @@ class ReviewerAgent:
     
 
     def _parse_review(self, raw_review: str) -> dict:
-        """Parse review."""
+        """Parse APPROVED/FEEDBACK lines out of the reviewer LLM response."""
         cleaned = re.sub(r"<think>.*?</think>", "", raw_review, flags=re.DOTALL).strip()
 
         result = {

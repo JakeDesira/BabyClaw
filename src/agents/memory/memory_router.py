@@ -29,7 +29,7 @@ class MemoryRouter:
 
 
     def _extract_json(self, text: str) -> dict:
-        """Extract json."""
+        """Parse the router's JSON response, returning a safe default on failure."""
         cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         start = cleaned.find("{")

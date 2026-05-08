@@ -128,6 +128,8 @@ You can change those defaults by editing `src/config.py`, setting environment va
 ```bash
 BABYCLAW_PLANNING_MODEL=gemma4
 BABYCLAW_REASONING_MODEL=gpt-oss:20b
+BABYCLAW_PYTHON_RUN_TIMEOUT=10     # seconds; raise for slow scripts
+BABYCLAW_MAX_ITERATIVE_STEPS=50    # iterative-mode step cap before BabyClaw stops
 ```
 
 Make sure the configured Ollama models are installed:
@@ -149,13 +151,7 @@ Run the Streamlit GUI:
 streamlit run src/gui_app.py
 ```
 
-You can also use the launcher script to start the GUI and open it in your browser automatically:
-
-```bash
-python babyclaw_launcher.py
-```
-
-The launcher uses Streamlit on port `8501`. If that port is busy, run Streamlit directly with another port:
+If port `8501` is busy, run Streamlit directly with another port:
 
 ```bash
 streamlit run src/gui_app.py --server.port=8502

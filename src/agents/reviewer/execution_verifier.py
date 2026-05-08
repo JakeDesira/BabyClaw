@@ -17,7 +17,7 @@ class ExecutionVerifier:
 
 
     def _split_pair(self, text: str) -> tuple[str, str] | None:
-        """Split tool input formatted as left::right."""
+        """Split tool input formatted as ``left::right`` into trimmed parts."""
         if "::" not in text:
             return None
 
@@ -26,7 +26,7 @@ class ExecutionVerifier:
 
 
     def _resolve_safe_path(self, path_text: str) -> Path | None:
-        """Resolve safe path."""
+        """Resolve a path through the filesystem guard, or None when no guard exists."""
         if self.filesystem_guard is None:
             return None
 
@@ -98,7 +98,7 @@ class ExecutionVerifier:
 
 
     def _verify_create_file(self, resolved_input: str) -> dict:
-        """Verify create file."""
+        """Confirm a created file exists with the expected content."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -148,7 +148,7 @@ class ExecutionVerifier:
 
 
     def _verify_write_file(self, resolved_input: str) -> dict:
-        """Verify write file."""
+        """Confirm a written file exists with the expected content."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -198,7 +198,7 @@ class ExecutionVerifier:
 
 
     def _verify_append_file(self, resolved_input: str) -> dict:
-        """Verify append file."""
+        """Confirm appended content was added at the end of the target file."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -243,7 +243,7 @@ class ExecutionVerifier:
 
 
     def _verify_delete_file(self, resolved_input: str) -> dict:
-        """Verify delete file."""
+        """Confirm the deleted file no longer exists."""
         safe = self._resolve_safe_path(resolved_input)
 
         if safe is None:
@@ -287,7 +287,7 @@ class ExecutionVerifier:
     
 
     def _verify_create_directory(self, resolved_input: str) -> dict:
-        """Verify create directory."""
+        """Confirm the directory now exists at the resolved path."""
         safe = self._resolve_safe_path(resolved_input)
 
         if safe is None:
@@ -309,7 +309,7 @@ class ExecutionVerifier:
 
 
     def _verify_move_path(self, resolved_input: str) -> dict:
-        """Verify move path."""
+        """Confirm the source is gone and the destination exists after a move."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -354,7 +354,7 @@ class ExecutionVerifier:
 
 
     def _verify_copy_path(self, resolved_input: str) -> dict:
-        """Verify copy path."""
+        """Confirm both source and destination exist after a copy."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -393,7 +393,7 @@ class ExecutionVerifier:
 
 
     def _verify_rename_path(self, resolved_input: str) -> dict:
-        """Verify rename path."""
+        """Confirm the renamed entry exists at the new name and not the old one."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:
@@ -440,7 +440,7 @@ class ExecutionVerifier:
     
 
     def _verify_run_python_file(self, step_result: str) -> dict:
-        """Verify run python file."""
+        """Treat a non-zero return code in the run output as a verification failure."""
         if step_result.startswith("Error") or step_result.startswith("Access denied"):
             return {
                 "ok": False,
@@ -473,7 +473,7 @@ class ExecutionVerifier:
     
     
     def _verify_python_content_quality(self, safe: Path, content: str) -> dict | None:
-        """Verify python content quality."""
+        """Catch obvious issues in generated Python files (markdown fences, prose, etc)."""
         if safe.suffix.lower() != ".py":
             return None
 
@@ -577,7 +577,7 @@ class ExecutionVerifier:
         return None
     
     def _verify_move_directory_contents(self, resolved_input: str) -> dict:
-        """Verify move directory contents."""
+        """Confirm both source and destination directories still exist after the move."""
         parts = self._split_pair(resolved_input)
 
         if parts is None:

@@ -27,7 +27,7 @@ class OllamaClient:
 
 
     def _build_request_args(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None, think: str | bool | None = None) -> dict:
-        """Build request args."""
+        """Assemble the keyword arguments passed to the Ollama chat client."""
         messages = []
 
         if system_prompt:

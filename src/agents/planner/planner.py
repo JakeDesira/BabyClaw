@@ -88,7 +88,7 @@ class PlannerAgent:
     
 
     def _build_directory_context(self, approved_dirs: list[str]) -> str:
-        """Build directory context."""
+        """Build a recursive listing of every approved directory for the planner."""
         if not approved_dirs:
             return ""
 
@@ -110,7 +110,7 @@ class PlannerAgent:
     
     
     def _build_file_state_context(self) -> str:
-        """Build file state context."""
+        """Describe the most recently active file for the planner."""
         if self.memory is None:
             return "No file currently active."
 
@@ -132,7 +132,7 @@ class PlannerAgent:
     
 
     def _build_files_context(self) -> str:
-        """Build files context."""
+        """List the uploaded files in ``media_input/`` for the planner."""
         available_files = tools.list_input_files()
 
         if not available_files:
@@ -142,7 +142,7 @@ class PlannerAgent:
 
 
     def _build_dirs_context(self, approved_dirs: list[str]) -> str:
-        """Build dirs context."""
+        """Describe approved roots and the active directory for the planner."""
         if not approved_dirs:
             return "No directories have been granted access yet."
 
@@ -169,7 +169,7 @@ class PlannerAgent:
     
     # ===== Parsing / Validation Helpers =====
     def _extract_json(self, text: str) -> str:
-        """Extract json."""
+        """Extract the outermost JSON object from raw planner output."""
         cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         start = cleaned.find("{")
@@ -267,7 +267,7 @@ class PlannerAgent:
 
 
     def _parse_plan(self, raw_plan: str) -> dict:
-        """Parse plan."""
+        """Parse and validate a JSON plan, returning a fallback on failure."""
         try:
             plan = self._load_planner_json(raw_plan)
         except Exception as e:
@@ -279,7 +279,7 @@ class PlannerAgent:
     
 
     def _validate_plan(self, plan: dict) -> dict:
-        """Validate plan."""
+        """Coerce a parsed plan into the canonical schema with safe defaults."""
         valid_memory_actions = {
             "NONE",
             "get_first_user_prompt",
@@ -349,7 +349,7 @@ class PlannerAgent:
     
 
     def _validate_next_step(self, step: dict) -> dict:
-        """Validate next step."""
+        """Coerce an iterative-mode step into the canonical schema."""
         status = str(step.get("status", "FINISH")).upper()
         action = str(step.get("action", "NONE")).strip()
         action_input = str(step.get("input", "")).strip()
@@ -455,7 +455,7 @@ class PlannerAgent:
 
 
     def _resolve_relative_path(self, path_value: str, must_exist: bool = False) -> str:
-        """Resolve relative path."""
+        """Resolve a planner-supplied path against the most appropriate approved root."""
         path_value = path_value.strip().strip("'\"")
 
         if not path_value:
@@ -540,7 +540,7 @@ class PlannerAgent:
     
     
     def _looks_like_filesystem_path(self, value: str) -> bool:
-        """Return whether input resembles filesystem path."""
+        """Return whether a value resembles a path (separators, ``~``, or extension)."""
         value = value.strip()
 
         if not value:
@@ -583,8 +583,8 @@ class PlannerAgent:
         )
     
 
-    def _normalize_plan(self, plan: dict, prompt: str) -> dict:
-        """Normalise normalize plan."""
+    def _normalise_plan(self, plan: dict, prompt: str) -> dict:
+        """Apply prompt-aware adjustments to a parsed plan before execution."""
         lower_prompt = prompt.lower()
         executor_actions = plan.get("executor_actions", [])
         first_action = executor_actions[0]["action"] if executor_actions else "NONE"
@@ -853,7 +853,7 @@ class PlannerAgent:
     
 
     def create_next_step_after_repetition(self, original_prompt: str, observations: list[dict], repeated_action: str, repeated_input: str) -> dict:
-        """Create next step after repetition."""
+        """Ask the planner for a different next step after a repetition was rejected."""
         approved_dirs = self._get_approved_directories()
         recent_context = self._get_context()
 
@@ -935,7 +935,7 @@ class PlannerAgent:
 
     # ===== Public Planner Methods =====
     def create_plan(self, prompt: str, retrieved_memory_context: str = "") -> dict:
-        """Create plan."""
+        """Convert a user prompt into a validated, normalised execution plan."""
         approved_dirs = self._get_approved_directories()
 
         planner_user_prompt = (
@@ -963,13 +963,13 @@ class PlannerAgent:
         self._debug("RAW PLAN", plan_response.content)
 
         parsed_plan = self._parse_plan(plan_response.content)
-        normalized_plan = self._normalize_plan(parsed_plan, prompt)
-        self._debug("PARSED PLAN", normalized_plan)
-        return normalized_plan
+        normalised_plan = self._normalise_plan(parsed_plan, prompt)
+        self._debug("PARSED PLAN", normalised_plan)
+        return normalised_plan
     
     
     def create_next_step(self, original_prompt: str, observations: list[dict],  max_observation_chars: int = 12000) -> dict:
-        """Create next step."""
+        """Choose the next iterative step based on the user goal and observations."""
         approved_dirs = self._get_approved_directories()
         recent_context = self._get_context()
 

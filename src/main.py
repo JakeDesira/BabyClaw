@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from backend_factory import build_backend
@@ -26,7 +27,7 @@ def print_restored_accessible_paths(filesystem_guard) -> None:
 
 
 def main() -> None:
-    """Run the module entry point."""
+    """Run the terminal REPL: build the backend, restore state, and loop on user input."""
     planning_model = DEFAULT_PLANNING_MODEL
     reasoning_model = DEFAULT_REASONING_MODEL
     debug = BABYCLAW_DEBUG
@@ -96,9 +97,12 @@ def main() -> None:
             continue
 
         if prompt.lower() == "trace":
-            print("\nBaby Claw trace:")
-            print(coordinator.last_trace if coordinator.last_trace else "No trace available yet.")
-            print()
+            if coordinator.last_trace:
+                print("\nBaby Claw trace:")
+                print(json.dumps(coordinator.last_trace, indent=2, default=str))
+                print()
+            else:
+                print("\nBaby Claw: No trace available yet.\n")
             continue
 
         if prompt.lower().startswith("grant access "):
@@ -117,7 +121,14 @@ def main() -> None:
                     print(memory_result)
                     print(active_result + "\n")
                 else:
-                    print("\nBaby Claw: Could not approve that path. Make sure it exists and is a directory.\n")
+                    resolved_path = Path(raw_path).expanduser().resolve()
+
+                    if not resolved_path.exists():
+                        print(f"\nBaby Claw: Path does not exist: {resolved_path}\n")
+                    elif not resolved_path.is_dir():
+                        print(f"\nBaby Claw: Path is not a directory: {resolved_path}\n")
+                    else:
+                        print(f"\nBaby Claw: Could not approve that path: {resolved_path}\n")
             else:
                 print("\nBaby Claw: Access denied.\n")
 

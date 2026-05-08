@@ -7,6 +7,7 @@ from action_constants import (
     INSPECTION_ACTIONS,
     WRITE_ACTIONS,
 )
+from config import MAX_ITERATIVE_STEPS
 from ollama_client import OllamaClient
 import prompts
 
@@ -76,28 +77,15 @@ class CoordinatorAgent:
         
 
     def _might_save_memory(self, prompt: str) -> bool:
-        """Return whether the prompt may request memory saving."""
-        lower_prompt = prompt.lower()
+        """Return whether the prompt may request a durable memory save.
 
-        save_markers = [
-            "remember",
-            "remeber",
-            "save this",
-            "save that",
-            "save my",
-            "store this",
-            "store that",
-            "note this",
-            "note that",
-            "keep in mind",
-            "from now on",
-            "going forward",
-            "for future reference",
-            "don't forget",
-            "do not forget",
-        ]
+        Delegates to MemoryWriter so the marker list lives in one place and
+        cannot drift out of sync with the gate inside ``MemoryWriter.extract``.
+        """
+        if self.memory_writer is None:
+            return False
 
-        return any(marker in lower_prompt for marker in save_markers)
+        return self.memory_writer.looks_like_save_request(prompt)
 
         
     def _save_extracted_memories(self, prompt: str) -> str:
@@ -246,7 +234,7 @@ class CoordinatorAgent:
 
 
     def _normalise_directory_match_text(self, text: str) -> str:
-        """Normalise normalise directory match text."""
+        """Normalise text for fuzzy directory-name matching."""
         lowered = text.lower().replace("\\", "/")
         return re.sub(r"[^a-z0-9]+", " ", lowered).strip()
 
@@ -326,7 +314,7 @@ class CoordinatorAgent:
     
 
     def _looks_like_debug_fragment(self, prompt: str) -> bool:
-        """Return whether input resembles debug fragment."""
+        """Return whether the prompt looks like a pasted traceback or error fragment."""
         lower_prompt = prompt.lower().strip()
 
         debug_markers = [
@@ -356,13 +344,6 @@ class CoordinatorAgent:
             return True
 
         return False
-
-
-    def _load_babyclaw_trace(self, prompt: str) -> dict:
-        """Parse a pasted BabyClaw trace JSON object if one is present."""
-        trace, _ = self._extract_babyclaw_trace_and_remainder(prompt)
-
-        return trace
 
 
     def _extract_babyclaw_trace_and_remainder(self, prompt: str) -> tuple[dict, str]:
@@ -527,7 +508,7 @@ class CoordinatorAgent:
 
 
     def _looks_like_file_operation(self, prompt: str) -> bool:
-        """Return whether input resembles file operation."""
+        """Return whether the prompt asks for a filesystem action on a file/folder/path."""
         lower_prompt = prompt.lower()
 
         filesystem_action_words = [
@@ -557,7 +538,7 @@ class CoordinatorAgent:
     
 
     def _looks_like_direct_writing_task(self, prompt: str) -> bool:
-        """Return whether input resembles direct writing task."""
+        """Return whether the prompt asks for an in-chat draft (no file targets)."""
         lower_prompt = prompt.lower()
 
         writing_words = [
@@ -620,7 +601,7 @@ class CoordinatorAgent:
     
 
     def _looks_like_directory_listing(self, prompt: str) -> bool:
-        """Return whether input resembles directory listing."""
+        """Return whether the prompt asks to list an approved or current directory."""
         lower_prompt = prompt.lower()
 
         return (
@@ -635,7 +616,7 @@ class CoordinatorAgent:
 
 
     def _is_short_follow_up(self, prompt: str) -> bool:
-        """Return whether the value is short follow up."""
+        """Return whether the prompt is a one-word affirmative follow-up."""
         lower_prompt = prompt.lower().strip()
 
         short_follow_ups = {
@@ -655,7 +636,7 @@ class CoordinatorAgent:
     
 
     def _looks_like_project_fix_task(self, prompt: str) -> bool:
-        """Return whether input resembles project fix task."""
+        """Return whether the prompt asks to fix/repair/continue a Python project."""
         lower_prompt = prompt.lower()
 
         project_words = [
@@ -690,7 +671,7 @@ class CoordinatorAgent:
     
 
     def _looks_like_project_build_task(self, prompt: str) -> bool:
-        """Return whether input resembles project build task."""
+        """Return whether the prompt asks to scaffold a new project/repo/app."""
         lower_prompt = prompt.lower()
 
         build_words = [
@@ -1014,7 +995,7 @@ class CoordinatorAgent:
     
     # ===== Main Entry Points =====
     def handle(self, prompt: str) -> str:
-        """Describe the handle operation."""
+        """Route a user prompt through memory, planning, execution, and review."""
         if self.memory is not None:
             try:
                 self.memory.save_short_term(role="user", content=prompt)
@@ -1039,13 +1020,11 @@ class CoordinatorAgent:
                 f"{trace_summary}"
             )
 
-        memory_save_result = ""
-
         if self._might_save_memory(prompt):
-            memory_save_result = self._save_extracted_memories(prompt)
+            save_result = self._save_extracted_memories(prompt)
 
-            if memory_save_result:
-                self._debug("MEMORY SAVE RESULT", memory_save_result)
+            if save_result:
+                self._debug("MEMORY SAVE RESULT", save_result)
 
         long_term_memory_context = self._get_relevant_long_term_memory(prompt)
 
@@ -1308,8 +1287,15 @@ class CoordinatorAgent:
         return target_path.lower().endswith((".py", ".pyw"))
 
     
-    def handle_iterative(self, prompt: str, max_steps: int = 30) -> str:
-        """Run the iterative planning and execution loop."""
+    def handle_iterative(self, prompt: str, max_steps: int | None = None) -> str:
+        """Run the iterative planning and execution loop.
+
+        ``max_steps`` defaults to ``config.MAX_ITERATIVE_STEPS`` (override via
+        the BABYCLAW_MAX_ITERATIVE_STEPS environment variable).
+        """
+        if max_steps is None:
+            max_steps = MAX_ITERATIVE_STEPS
+
         self._set_task_working_directory_from_prompt(prompt)
         
         observations = []

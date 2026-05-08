@@ -3,7 +3,7 @@ import shutil
 
 
 def list_directory(path: str | Path, filesystem_guard) -> str:
-    """List directory."""
+    """List the immediate contents of an approved directory."""
     safe = filesystem_guard.safe_path(path)
 
     if safe is None:
@@ -24,7 +24,7 @@ def list_directory(path: str | Path, filesystem_guard) -> str:
 
 
 def create_directory(path: str | Path, filesystem_guard) -> str:
-    """Create directory."""
+    """Create a directory if it sits inside an approved root."""
     safe = filesystem_guard.safe_path(path)
 
     if safe is None:
@@ -66,7 +66,10 @@ def delete_directory(path: str | Path, filesystem_guard) -> str:
 
 
 def move_path(action_input: str, filesystem_guard) -> str:
-    """Move path."""
+    """Move a file or directory between approved locations.
+
+    Expected format: ``source_path::destination_path``.
+    """
     parts = action_input.split("::", 1)
 
     if len(parts) != 2:
@@ -96,7 +99,11 @@ def move_path(action_input: str, filesystem_guard) -> str:
 
 
 def rename_path(action_input: str, filesystem_guard) -> str:
-    """Rename path."""
+    """Rename an approved file or directory in place.
+
+    Expected format: ``source_path::new_name``. ``new_name`` must not contain
+    path separators.
+    """
     parts = action_input.split("::", 1)
 
     if len(parts) != 2:
@@ -133,7 +140,10 @@ def rename_path(action_input: str, filesystem_guard) -> str:
     
 
 def copy_path(action_input: str, filesystem_guard) -> str:
-    """Copy path."""
+    """Copy an approved file or directory to another approved location.
+
+    Expected format: ``source_path::destination_path``.
+    """
     parts = action_input.split("::", 1)
 
     if len(parts) != 2:
@@ -166,8 +176,15 @@ def copy_path(action_input: str, filesystem_guard) -> str:
         return f"Copied: {source} -> {destination}"
     except Exception as e:
         return f"Error copying path: {e}"
+
+
 def move_directory_contents(action_input: str, filesystem_guard) -> str:
-    """Move directory contents."""
+    """Move every direct child of an approved directory into another approved directory.
+
+    Expected format: ``source_directory::destination_directory``. Items already
+    inside the destination, or that would collide with an existing entry, are
+    skipped rather than overwritten.
+    """
     parts = action_input.split("::", 1)
 
     if len(parts) != 2:

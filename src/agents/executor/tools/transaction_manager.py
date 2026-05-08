@@ -8,10 +8,19 @@ from action_constants import WRITE_ACTIONS
 class TransactionManager:
     """Create and restore snapshots around filesystem writes."""
     def __init__(self, filesystem_guard, snapshot_root: str | Path = ".babyclaw_snapshots"):
-        """Initialise the instance."""
+        """Configure the snapshot root, tolerating mkdir failures.
+
+        If the snapshot root cannot be created at construction time (read-only
+        home, sandboxed filesystem), snapshot operations will still report
+        clear errors at call time instead of crashing the whole backend.
+        """
         self.filesystem_guard = filesystem_guard
         self.snapshot_root = Path(snapshot_root).expanduser().resolve()
-        self.snapshot_root.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self.snapshot_root.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
 
         self.last_snapshot_path: Path | None = None
         self.last_target_path: Path | None = None
@@ -26,7 +35,7 @@ class TransactionManager:
 
 
     def get_last_snapshot_path(self) -> str:
-        """Return last snapshot path."""
+        """Return the path of the most recent snapshot, or '' if none exists."""
         if self.last_snapshot_path is None:
             return ""
 
@@ -34,7 +43,7 @@ class TransactionManager:
 
 
     def get_last_target_path(self) -> str:
-        """Return last target path."""
+        """Return the directory the most recent snapshot was taken from."""
         if self.last_target_path is None:
             return ""
 
@@ -142,6 +151,6 @@ class TransactionManager:
 
 
     def clear_last_snapshot(self) -> None:
-        """Clear last snapshot."""
+        """Forget the recorded snapshot/target paths after a restore completes."""
         self.last_snapshot_path = None
         self.last_target_path = None

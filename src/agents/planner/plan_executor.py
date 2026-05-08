@@ -39,7 +39,7 @@ class PlanExecutor:
     
 
     def set_task_working_directory(self, directory: str) -> None:
-        """Set task working directory."""
+        """Set the per-task working directory if it is inside an approved root."""
         cleaned = directory.strip().strip("'\"")
 
         if not cleaned:
@@ -59,7 +59,7 @@ class PlanExecutor:
 
 
     def clear_task_working_directory(self) -> None:
-        """Clear task working directory."""
+        """Forget the per-task working directory."""
         self.task_working_directory = ""
 
 
@@ -102,7 +102,7 @@ class PlanExecutor:
 
 
     def _resolve_relative_path(self, path_value: str, must_exist: bool = False) -> str:
-        """Resolve relative path."""
+        """Resolve a planner-supplied path against the task or active workspace."""
         path_value = path_value.strip().strip("'\"")
 
         if not path_value:
@@ -170,11 +170,6 @@ class PlanExecutor:
         return str(candidate)
 
 
-    def _get_active_or_default_directory(self) -> str:
-        """Return the active directory or fallback approved directory."""
-        return self._get_task_or_active_directory()
-
-
     def _get_snapshot_directory_for_plan(self, prompt: str, plan: dict) -> str:
         """Choose the directory that should be snapshotted for a plan."""
         approved_dirs = self._get_approved_directories()
@@ -204,7 +199,7 @@ class PlanExecutor:
     
 
     def get_snapshot_directory_for_action(self, prompt: str, action: str, action_input: str) -> str:
-        """Return snapshot directory for action."""
+        """Choose the directory that should be snapshotted before this action runs."""
         approved_dirs = self._get_approved_directories()
 
         if not approved_dirs:
@@ -269,7 +264,7 @@ class PlanExecutor:
 
     # ==== Action Preparation Helpers =====
     def _prepare_create_file_action(self, prompt: str, action_input: str, previous_results: list[str] | None = None) -> str:
-        """Prepare create file action."""
+        """Resolve the target path and produce file content for ``create_file``."""
         parts = action_input.split("::", 1)
         filepath = parts[0].strip()
         filepath = self._resolve_relative_path(filepath)
@@ -293,6 +288,11 @@ class PlanExecutor:
             f"Target file extension: {Path(filepath).suffix.lower()}",
             execution_context=execution_context,
         )
+
+        if self._looks_like_reasoning_failure(generated):
+            raise ValueError(
+                "create_file aborted because the reasoning model did not return usable content."
+            )
 
         return f"{filepath}::{generated}"
 
@@ -328,6 +328,24 @@ class PlanExecutor:
             return cleaned
 
         return ""
+
+
+    def _looks_like_reasoning_failure(self, content: str | None) -> bool:
+        """Detect a transport-error string returned by the reasoning model.
+
+        ``ResponseGenerator._ask_reasoning_model`` returns the raw error message
+        when an Ollama call fails. Without this guard, that error text would be
+        written verbatim as file content.
+        """
+        if not content:
+            return True
+
+        cleaned = content.strip()
+
+        if not cleaned:
+            return True
+
+        return cleaned.startswith("Error communicating with Ollama")
 
 
     def _looks_like_placeholder_content(self, content: str) -> bool:
@@ -421,7 +439,7 @@ class PlanExecutor:
 
         if action == "list_directory":
             if not action_input.strip():
-                active_or_default = self._get_active_or_default_directory()
+                active_or_default = self._get_task_or_active_directory()
 
                 if active_or_default:
                     return active_or_default
@@ -450,9 +468,14 @@ class PlanExecutor:
 
 
     # ===== Edit/Memory Helpers =====
-    def _handle_edit_ready(self, step_result: str,prompt: str, previous_results: list[str] | None = None) -> str:
+    def _handle_edit_ready(self, step_result: str, prompt: str, previous_results: list[str] | None = None) -> str:
         """Generate improved file content and write it after edit preparation."""
-        _, filepath, instruction, existing_content = step_result.split("::", 3)
+        parts = step_result.split("::", 3)
+
+        if len(parts) != 4:
+            return f"Error: edit_file preparation returned a malformed payload: {step_result[:200]}"
+
+        _, filepath, instruction, existing_content = parts
 
         if self.response_generator is None:
             return "No response generator is available for edit_file flow."
@@ -476,6 +499,12 @@ class PlanExecutor:
             existing_content=existing_content,
             instruction=instruction,
         )
+
+        if self._looks_like_reasoning_failure(improved):
+            return (
+                "Error: edit_file aborted because the reasoning model did not return usable content. "
+                f"Underlying response: {improved[:200] if improved else '(empty)'}"
+            )
 
         write_input = f"{filepath}::{improved}"
         self._last_write_input = write_input

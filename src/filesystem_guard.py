@@ -20,13 +20,13 @@ class FilesystemGuard:
         )
     
     def set_active_directory(self, raw_path: str | Path) -> bool:
-        """Set active directory."""
+        """Set the active directory if it sits inside any approved root."""
         resolved = Path(raw_path).expanduser().resolve()
 
-        if resolved not in self.approved_directories:
+        if not resolved.exists() or not resolved.is_dir():
             return False
 
-        if not resolved.exists() or not resolved.is_dir():
+        if not self._is_inside_any_approved(resolved):
             return False
 
         self.active_directory = resolved
@@ -34,31 +34,41 @@ class FilesystemGuard:
 
 
     def approve(self, raw_path: str) -> bool:
-        """Approve a directory and make it active."""
+        """Approve a directory and make it active.
+
+        The new path is treated as an active workspace if it is already covered
+        by an existing approved root. If it is broader than (or unrelated to)
+        every existing approved root, narrower descendants are pruned and the
+        new path becomes an approved root.
+        """
         resolved = Path(raw_path).expanduser().resolve()
 
         if not resolved.exists() or not resolved.is_dir():
             return False
 
         for approved in self.approved_directories:
-            if resolved == approved:
-                self.active_directory = approved
-                return True
-
-            if resolved in approved.parents:
-                self.active_directory = approved
+            if resolved == approved or approved in resolved.parents:
+                self.active_directory = resolved
                 return True
 
         self.approved_directories = [
             approved
             for approved in self.approved_directories
-            if approved not in resolved.parents
+            if resolved not in approved.parents
         ]
 
         self.approved_directories.append(resolved)
         self.active_directory = resolved
 
         return True
+
+
+    def _is_inside_any_approved(self, path: Path) -> bool:
+        """Return whether a resolved path equals or is inside any approved root."""
+        return any(
+            path == approved or approved in path.parents
+            for approved in self.approved_directories
+        )
 
 
     def resolve_path(self, file_path: str | Path) -> Path:
@@ -108,12 +118,12 @@ class FilesystemGuard:
 
 
     def list_approved(self) -> list[str]:
-        """List approved."""
+        """Return approved directory roots as a list of resolved string paths."""
         return [str(directory) for directory in self.approved_directories]
 
 
     def get_active_directory(self) -> str:
-        """Return active directory."""
+        """Return the active directory as a string, or an empty string if unset."""
         if self.active_directory is None:
             return ""
 
@@ -132,7 +142,7 @@ class FilesystemGuard:
             if directory.resolve() != resolved
         ]
 
-        if self.active_directory is not None and self.active_directory.resolve() == resolved:
+        if self.active_directory is not None and not self._is_inside_any_approved(self.active_directory):
             self.active_directory = (
                 self.approved_directories[-1]
                 if self.approved_directories
@@ -143,7 +153,7 @@ class FilesystemGuard:
 
 
     def get_approved_root_for_path(self, file_path: str | Path) -> Path | None:
-        """Return approved root for path."""
+        """Return the most specific approved root that contains ``file_path``."""
         target = self.resolve_path(file_path)
 
         matching_roots = [

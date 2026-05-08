@@ -6,6 +6,7 @@ from pypdf import PdfReader
 
 
 from action_constants import SKIP_SEARCH_DIRS
+from config import PYTHON_RUN_TIMEOUT_SECONDS
 from paths import MEDIA_INPUT_DIR
 
 
@@ -28,7 +29,7 @@ def list_input_files() -> list[str]:
     )
 
 
-def _normalize_query(text: str) -> str:
+def _normalise_query(text: str) -> str:
     """
     Normalize a prompt/file query for looser matching.
     """
@@ -124,8 +125,8 @@ def find_file_in_input(filename: str) -> Path | None:
     query_name = query_path.name
     query_suffix = query_path.suffix.lower()
     query_stem = query_path.stem
-    query_name_normalized = _normalize_query(query_name)
-    query_stem_normalized = _normalize_query(query_stem)
+    query_name_normalised = _normalise_query(query_name)
+    query_stem_normalised = _normalise_query(query_stem)
 
     files = [file for file in INPUT_DIR.iterdir() if file.is_file()]
 
@@ -136,7 +137,7 @@ def find_file_in_input(filename: str) -> Path | None:
     for file in files:
         if query_suffix and file.suffix.lower() != query_suffix:
             continue
-        if _normalize_query(file.stem) == query_stem_normalized:
+        if _normalise_query(file.stem) == query_stem_normalised:
             return file
 
     candidates = []
@@ -145,18 +146,18 @@ def find_file_in_input(filename: str) -> Path | None:
         if query_suffix and file.suffix.lower() != query_suffix:
             continue
 
-        file_name_normalized = _normalize_query(file.name)
-        file_stem_normalized = _normalize_query(file.stem)
+        file_name_normalised = _normalise_query(file.name)
+        file_stem_normalised = _normalise_query(file.stem)
 
-        if query_name_normalized in file_name_normalized:
+        if query_name_normalised in file_name_normalised:
             candidates.append(file)
             continue
 
-        if query_stem_normalized in file_stem_normalized:
+        if query_stem_normalised in file_stem_normalised:
             candidates.append(file)
             continue
 
-        if file_stem_normalized in query_stem_normalized:
+        if file_stem_normalised in query_stem_normalised:
             candidates.append(file)
             continue
 
@@ -535,17 +536,21 @@ def find_guarded_file(file_name: str, filesystem_guard=None) -> str:
 
     return "Found multiple files:\n" + "\n".join(str(match) for match in unique_matches)
 
-def run_python_file(path: str | Path, filesystem_guard=None, timeout_seconds: int = 10) -> str:
+def run_python_file(path: str | Path, filesystem_guard=None, timeout_seconds: int | None = None) -> str:
     """
     Run an approved Python file and return stdout/stderr.
 
     This is intentionally restricted:
     - only approved paths
     - only .py files
-    - timeout enforced
+    - timeout enforced (defaults to ``config.PYTHON_RUN_TIMEOUT_SECONDS``,
+      override via the BABYCLAW_PYTHON_RUN_TIMEOUT environment variable)
     """
     if filesystem_guard is None:
         return "Access denied: no filesystem guard available."
+
+    if timeout_seconds is None:
+        timeout_seconds = PYTHON_RUN_TIMEOUT_SECONDS
 
     safe = filesystem_guard.safe_path(path)
 

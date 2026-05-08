@@ -89,7 +89,7 @@ class ResponseGenerator:
 
 
     def transform_content(self, prompt: str, source_text: str, transformation: str) -> str:
-        """Transform content."""
+        """Apply a SUMMARISE/EXPLAIN/EXTRACT/EXECUTE transformation to source_text."""
         user_prompt = (
             f"Original user request:\n{prompt}\n\n"
             f"Transformation type:\n{transformation}\n\n"
@@ -147,7 +147,7 @@ class ResponseGenerator:
 
 
     def generate_file_content(self, prompt: str, execution_context: str = "") -> str:
-        """Generate file content."""
+        """Generate raw content for a single new file using the reasoning model."""
         context = self._get_context()
         last_file_name = self.memory.get_last_active_file_name() if self.memory else ""
         last_file_content = self.memory.get_last_active_file_content() if self.memory else ""
@@ -171,7 +171,7 @@ class ResponseGenerator:
 
 
     def improve_file_content(self, prompt: str, existing_content: str, instruction: str) -> str:
-        """Improve file content."""
+        """Return the rewritten content for a single existing file."""
         user_prompt = (
             f"User request:\n{prompt}\n\n"
             f"Edit instruction for this file only:\n{instruction or prompt}\n\n"

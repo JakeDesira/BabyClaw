@@ -90,7 +90,7 @@ def build_backend(reasoning_mode: str):
 
 
 def initialise_state():
-    """Initialise state."""
+    """Populate Streamlit ``session_state`` with backend, chat, and task defaults."""
     if "reasoning_mode" not in st.session_state:
         st.session_state.reasoning_mode = "medium"
 
@@ -132,7 +132,7 @@ def initialise_state():
 
 
 def get_model_labels() -> tuple[str, str]:
-    """Return model labels."""
+    """Return ``(planning_model, reasoning_model)`` from the backend, with safe fallbacks."""
     backend = st.session_state.backend
 
     planning_model = DEFAULT_PLANNING_MODEL
@@ -152,7 +152,7 @@ def get_model_labels() -> tuple[str, str]:
 
 
 def rebuild_backend_if_mode_changed(selected_mode: str):
-    """Rebuild backend if mode changed."""
+    """Rebuild the backend graph when the reasoning mode toggle changes."""
     if selected_mode != st.session_state.reasoning_mode:
         old_backend = st.session_state.backend
 
@@ -174,7 +174,7 @@ def run_agent_task(
     recent_messages: list[dict],
     result_queue: Queue,
 ):
-    """Run agent task."""
+    """Run the coordinator inside a child process and stream traces back to the GUI."""
     try:
         backend = build_backend(reasoning_mode)
 
@@ -247,7 +247,7 @@ def run_agent_task(
 
 
 def cancel_current_task():
-    """Cancel current task."""
+    """Terminate the running agent process and append a cancellation message."""
     current_task = st.session_state.current_task
 
     if not current_task:
@@ -306,7 +306,7 @@ def handle_task_queue_event(event: dict, current_task: dict) -> dict | None:
 
 
 def collect_finished_task():
-    """Collect finished task."""
+    """Drain trace events and the final result from the running agent process."""
     current_task = st.session_state.current_task
     result_queue = st.session_state.task_result_queue
 
@@ -413,7 +413,7 @@ def collect_finished_task():
     
 
 def render_header():
-    """Render header."""
+    """Render the BabyClaw title bar with planning/reasoning model labels."""
     planning_model, reasoning_model = get_model_labels()
 
     st.markdown(
@@ -526,7 +526,7 @@ def render_message_text(content: str):
 
 
 def shorten_text(value, max_chars: int = 4000):
-    """Shorten text."""
+    """Trim long strings before they are sent to the GUI."""
     if not isinstance(value, str):
         return value
 
@@ -537,7 +537,7 @@ def shorten_text(value, max_chars: int = 4000):
 
 
 def shrink_step_for_gui(step: dict) -> dict:
-    """Shrink step for gui."""
+    """Truncate large fields on a single execution-trace step for GUI display."""
     if not isinstance(step, dict):
         return {}
 
@@ -561,7 +561,7 @@ def shrink_step_for_gui(step: dict) -> dict:
 
 
 def shrink_trace_for_gui(trace: dict) -> dict:
-    """Shrink trace for gui."""
+    """Truncate large fields throughout a coordinator trace for GUI display."""
     if not isinstance(trace, dict):
         return {}
 
@@ -622,7 +622,7 @@ def shrink_trace_for_gui(trace: dict) -> dict:
 
 
 def start_agent_task(prompt: str):
-    """Start agent task."""
+    """Spawn the agent child process for this prompt and reset trace state."""
     st.session_state.current_task_id += 1
     task_id = st.session_state.current_task_id
 
@@ -635,7 +635,6 @@ def start_agent_task(prompt: str):
     }
 
     filesystem_guard = st.session_state.backend["filesystem_guard"]
-    transaction_manager = st.session_state.backend["transaction_manager"]
 
     approved_dirs = filesystem_guard.list_approved()
     active_directory = filesystem_guard.get_active_directory()
@@ -647,16 +646,9 @@ def start_agent_task(prompt: str):
         for message in st.session_state.messages[-10:]
     ]
 
-    if active_directory:
-        snapshot_result = transaction_manager.snapshot_directory(active_directory)
-
-        if snapshot_result.startswith("Snapshot created:"):
-            st.session_state.last_snapshot_path = snapshot_result.replace(
-                "Snapshot created:",
-                "",
-                1,
-            ).strip()
-            st.session_state.last_snapshot_target = active_directory
+    # The agent process creates its own snapshot before any write action and
+    # returns the snapshot path through the trace, so no preemptive GUI-side
+    # snapshot is needed here.
 
     st.session_state.messages.append(
         {
@@ -694,7 +686,7 @@ def start_agent_task(prompt: str):
 
 
 def render_workspace_tab():
-    """Render workspace tab."""
+    """Render the Workspace tab: approved directories, granting, and undo."""
     backend = st.session_state.backend
     filesystem_guard = backend["filesystem_guard"]
     memory = backend["memory"]
@@ -868,7 +860,7 @@ def restore_snapshot_reference_from_trace(trace: dict) -> None:
 
 
 def undo_last_filesystem_change() -> str:
-    """Undo last filesystem change."""
+    """Restore the most recent snapshot using GUI-side state."""
     snapshot_path_value = st.session_state.get("last_snapshot_path", "")
     target_path_value = st.session_state.get("last_snapshot_target", "")
 
@@ -931,7 +923,7 @@ def undo_last_filesystem_change() -> str:
         return f"Undo failed safely. Original project was not intentionally deleted. Error: {e}"
 
 def render_files_tab():
-    """Render files tab."""
+    """Render the Files tab: upload, list, and delete media-input files."""
     st.subheader("Input files")
     st.caption("Upload files here so BabyClaw can read them from the media input directory.")
 
@@ -1028,7 +1020,7 @@ def render_files_tab():
 
 
 def render_memory_tab():
-    """Render memory tab."""
+    """Render the Memory tab: list and delete saved long-term memories."""
     backend = st.session_state.backend
     memory = backend["memory"]
 
@@ -1186,7 +1178,7 @@ def apply_stop_button_script():
 
 
 def render_working_input_bar():
-    """Render fake input bar while the agent is running."""
+    """Render the disabled-looking input bar shown while the agent is busy."""
     clicked = st.button(
         "■",
         key="stop_inside_input",
@@ -1210,7 +1202,7 @@ def render_working_input_bar():
 
 
 def render_chat_tab():
-    """Render chat tab."""
+    """Render the chat tab, the working-state input bar, and the prompt input."""
     current_task = st.session_state.current_task
     task_is_running = current_task is not None
 
@@ -1263,7 +1255,7 @@ def render_chat_tab():
 
 
 def render_debug_tab():
-    """Render debug tab."""
+    """Render the Debug / Internals tab with planner, executor, and verifier panes."""
     trace = st.session_state.last_trace or {}
 
     st.subheader("Agent internals")
@@ -1357,7 +1349,7 @@ def render_debug_tab():
 
 
 def render_app():
-    """Render app."""
+    """Top-level GUI render: assets, header, all tabs, and re-render polling."""
     ensure_valid_std_streams()
     render_gui_assets()
 
@@ -1398,7 +1390,7 @@ def render_app():
 
 
 def main():
-    """Run the module entry point."""
+    """Initialise Streamlit session state and render the Baby Claw app."""
     initialise_state()
     render_app()
 

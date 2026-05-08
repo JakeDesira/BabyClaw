@@ -40,62 +40,18 @@ class ExecutorAgent:
         self.memory.set_last_active_file(file_name, file_content)
 
 
-    def _try_get_active_file_content(self, lower_prompt: str) -> str | None:
-        """Return active file content for direct follow-up prompts."""
-        if self.memory is None:
-            return None
-
-        last_file_name = self.memory.get_last_active_file_name()
-        last_file_content = self.memory.get_last_active_file_content()
-        self._debug("Active file candidate", last_file_name)
-
-        current_file_phrases = {
-            "read it",
-            "read the file",
-            "open it",
-            "open the file",
-            "show it",
-            "show the file",
-            "process it",
-            "summarise it",
-            "summarize it",
-            "explain it",
-            "explain the file",
-            "summarise the file",
-            "summarize the file",
-            "what does it say",
-            "what does the file say",
-            "what is in it",
-            "what is inside it",
-        }
-
-        if lower_prompt in current_file_phrases and last_file_name and last_file_content:
-            self._debug("Actually reusing active file", last_file_name)
-            return last_file_content
-
-        return None
-    
-
-    def _try_get_previous_file_content(self, lower_prompt: str) -> str | None:
-        """Return previous active file content for comparison follow-ups."""
-        if self.memory is None:
-            return None
-
-        previous_file_name = self.memory.get_previous_active_file_name()
-        previous_file_content = self.memory.get_previous_active_file_content()
-
-        if "other file" in lower_prompt and previous_file_name and previous_file_content:
-            self._debug("Switching to previous file", previous_file_name)
-            self.memory.set_last_active_file(previous_file_name, previous_file_content)
-            return previous_file_content
-
-        return None
-
-
     def _handle_read_file(self, action_input: str, original_prompt: str) -> str:
-        """Resolve and read an uploaded/input file."""
-        lower_prompt = original_prompt.lower().strip()
+        """Resolve and read an uploaded/input file.
 
+        Resolution order:
+        1. Exact filename match against ``media_input/``.
+        2. Single-file fallback when ``media_input/`` contains exactly one
+           plausible file for this prompt (delegated to ``get_single_obvious_file``).
+        3. Otherwise ask the user to specify which file.
+
+        Phrase-based follow-ups such as "read it" or "the other file" are
+        handled by the planner, which routes them to memory actions.
+        """
         if action_input and action_input != "NONE":
             file_path = tools.find_file_in_input(action_input)
             self._debug("Explicit file match", file_path)
@@ -104,16 +60,6 @@ class ExecutorAgent:
                 file_content = tools.read_file(file_path)
                 self._remember_file_if_valid(file_path.name, file_content)
                 return file_content
-
-        active_file_content = self._try_get_active_file_content(lower_prompt)
-
-        if active_file_content is not None:
-            return active_file_content
-
-        previous_file_content = self._try_get_previous_file_content(lower_prompt)
-
-        if previous_file_content is not None:
-            return previous_file_content
 
         obvious_file = tools.get_single_obvious_file(original_prompt)
 
@@ -166,7 +112,7 @@ class ExecutorAgent:
 
 
     def handle(self, action: str, action_input: str = "", original_prompt: str = "") -> str:
-        """Describe the handle operation."""
+        """Dispatch an executor action to the matching tool and return its result."""
         action = action.strip()
         action_input = action_input or ""
         original_prompt = original_prompt or ""

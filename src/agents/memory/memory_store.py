@@ -26,8 +26,16 @@ class SQLiteMemoryStore:
     def _ensure_database(self) -> None:
         """
         Create the memories/settings tables if they do not already exist.
+
+        WAL journal mode is enabled so concurrent processes (GUI parent and
+        agent child) can read while another writes.
         """
         with self._connect() as connection:
+            try:
+                connection.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.DatabaseError:
+                pass
+
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS memories (
@@ -209,6 +217,43 @@ class SQLiteMemoryStore:
             ).fetchall()
 
             return [dict(row) for row in rows]
+
+
+    def find_exact_memory(self, memory_type: str, content: str) -> dict | None:
+        """Return a memory matching memory_type and content exactly, or None.
+
+        Unlike ``search_memories`` this performs no scoring and does not update
+        ``last_accessed_at``, so it is safe to use for deduplication checks
+        without polluting access timestamps.
+        """
+        cleaned_type = memory_type.strip()
+        cleaned_content = content.strip()
+
+        if not cleaned_type or not cleaned_content:
+            return None
+
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    id,
+                    memory_type,
+                    content,
+                    source,
+                    importance,
+                    created_at,
+                    last_accessed_at
+                FROM memories
+                WHERE memory_type = ? AND content = ?
+                LIMIT 1
+                """,
+                (cleaned_type, cleaned_content),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            return dict(row)
 
 
     def get_memory(self, memory_id: int) -> dict | None:

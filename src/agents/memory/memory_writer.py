@@ -26,7 +26,7 @@ class MemoryWriter:
 
 
     def _extract_json(self, text: str) -> dict:
-        """Extract json."""
+        """Parse the writer's JSON response, returning a safe default on failure."""
         cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         start = cleaned.find("{")
@@ -49,10 +49,13 @@ class MemoryWriter:
             }
 
 
-    def _looks_like_memory_save_request(self, user_prompt: str) -> bool:
-        """
-        Cheap pre-check to avoid calling the memory writer LLM unless the user
-        clearly asks to save something.
+    def looks_like_save_request(self, user_prompt: str) -> bool:
+        """Cheap pre-check shared with the coordinator.
+
+        Returns True when the user prompt contains wording that asks the
+        assistant to remember, save, or note something durably. Used to
+        avoid calling the memory writer LLM on prompts that clearly do not
+        request saving.
         """
         lower_prompt = user_prompt.lower().strip()
 
@@ -61,6 +64,7 @@ class MemoryWriter:
 
         save_markers = [
             "remember",
+            "remeber",
             "save this",
             "save that",
             "save my",
@@ -82,7 +86,7 @@ class MemoryWriter:
 
 
     def _normalise_extracted_memories(self, parsed: dict) -> list[dict]:
-        """Normalise normalise extracted memories."""
+        """Normalise the memory list returned by the writer LLM."""
         memories = parsed.get("memories", [])
 
         if not isinstance(memories, list):
@@ -136,7 +140,7 @@ class MemoryWriter:
             "reason": "The user explicitly asked to remember this."
         }
         """
-        if not self._looks_like_memory_save_request(user_prompt):
+        if not self.looks_like_save_request(user_prompt):
             normalised = {
                 "should_save": False,
                 "memories": [],

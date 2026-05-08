@@ -165,17 +165,10 @@ class MemoryAgent:
         if not cleaned_content:
             return "Error: Cannot save an empty memory."
 
-        existing = self.memory_store.search_memories(
-            query=cleaned_content,
-            limit=20,
-        )
+        existing = self.memory_store.find_exact_memory(memory_type, cleaned_content)
 
-        for memory in existing:
-            if (
-                memory.get("memory_type") == memory_type
-                and memory.get("content") == cleaned_content
-            ):
-                return f"Memory already exists [{memory['id']}]: {cleaned_content}"
+        if existing is not None:
+            return f"Memory already exists [{existing['id']}]: {cleaned_content}"
 
         return self.save_long_term_memory(
             content=cleaned_content,
@@ -262,17 +255,10 @@ class MemoryAgent:
 
         resolved_path = str(Path(cleaned_path).expanduser().resolve())
 
-        existing = self.memory_store.search_memories(
-            query=resolved_path,
-            limit=20,
-        )
+        existing = self.memory_store.find_exact_memory("accessible_path", resolved_path)
 
-        for memory in existing:
-            if (
-                memory.get("memory_type") == "accessible_path"
-                and memory.get("content") == resolved_path
-            ):
-                return f"Accessible path is already saved: {resolved_path}"
+        if existing is not None:
+            return f"Accessible path is already saved: {resolved_path}"
 
         try:
             memory_id = self.memory_store.add_memory(
@@ -323,19 +309,7 @@ class MemoryAgent:
 
         resolved_path = str(Path(cleaned_path).expanduser().resolve())
 
-        memories = self.memory_store.search_memories(
-            query=resolved_path,
-            limit=100,
-        )
-
-        for memory in memories:
-            if (
-                memory.get("memory_type") == "accessible_path"
-                and memory.get("content") == resolved_path
-            ):
-                return memory
-
-        return None
+        return self.memory_store.find_exact_memory("accessible_path", resolved_path)
 
 
     def revoke_accessible_path(self, path_text: str) -> str:
@@ -430,17 +404,11 @@ class MemoryAgent:
         if action == "get_last_active_file_content":
             return self.get_last_active_file_content()
 
-        if action == "get_last_active_file_type":
-            return self.get_last_active_file_type()
-
         if action == "get_previous_active_file_name":
             return self.get_previous_active_file_name()
 
         if action == "get_previous_active_file_content":
             return self.get_previous_active_file_content()
-
-        if action == "get_previous_active_file_type":
-            return self.get_previous_active_file_type()
 
         if action == "search_long_term_memory":
             return self.search_long_term_memory(action_input)
