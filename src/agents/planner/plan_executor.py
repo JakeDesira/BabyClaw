@@ -658,9 +658,15 @@ class PlanExecutor:
                     "snapshot_target": snapshot_metadata["snapshot_target"],
                 }
 
-        if plan.get("needs_memory") and self.memory is not None:
+        memory_action = plan.get("memory_action", "NONE")
+
+        if (
+            plan.get("needs_memory")
+            and memory_action != "NONE"
+            and self.memory is not None
+        ):
             context = self.memory.handle(
-                plan.get("memory_action", "NONE"),
+                memory_action,
                 plan.get("memory_input", ""),
             )
             self._debug("MEMORY CONTEXT", context)

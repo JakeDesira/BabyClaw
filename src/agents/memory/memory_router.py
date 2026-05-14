@@ -159,6 +159,21 @@ class MemoryRouter:
         return any(marker in lower_prompt for marker in file_task_markers)
 
 
+    def _looks_like_followup_personal_reference(
+        self,
+        user_prompt: str,
+        short_term_context: str,
+    ) -> bool:
+        """Return True for follow-up prompts that mention a possessive reference."""
+        if not short_term_context.strip():
+            return False
+
+        if not re.search(r"(^|\n)assistant:", short_term_context.lower()):
+            return False
+
+        return bool(re.search(r"\bmy\s+[a-z]+\b", user_prompt.lower()))
+
+
     def check(self, user_prompt: str, short_term_context: str = "") -> dict:
         """Return the memory routing decision for a user prompt."""
         cleaned_prompt = user_prompt.strip()
@@ -171,8 +186,16 @@ class MemoryRouter:
             }
 
         looks_memory_related = self._looks_like_memory_request(cleaned_prompt)
+        followup_personal = self._looks_like_followup_personal_reference(
+            cleaned_prompt,
+            short_term_context,
+        )
 
-        if self._looks_like_file_or_code_task(cleaned_prompt) and not looks_memory_related:
+        if (
+            self._looks_like_file_or_code_task(cleaned_prompt)
+            and not looks_memory_related
+            and not followup_personal
+        ):
             normalised = {
                 "needs_memory": False,
                 "search_query": "",
@@ -182,11 +205,21 @@ class MemoryRouter:
             self._debug("RULE-BASED MEMORY ROUTER RESULT", normalised)
             return normalised
 
-        if not looks_memory_related:
+        if not looks_memory_related and not followup_personal:
             normalised = {
                 "needs_memory": False,
                 "search_query": "",
                 "reason": "Skipped memory lookup because no memory-related wording was detected.",
+            }
+
+            self._debug("RULE-BASED MEMORY ROUTER RESULT", normalised)
+            return normalised
+
+        if followup_personal and not looks_memory_related:
+            normalised = {
+                "needs_memory": True,
+                "search_query": cleaned_prompt,
+                "reason": "Rule-based memory check.",
             }
 
             self._debug("RULE-BASED MEMORY ROUTER RESULT", normalised)

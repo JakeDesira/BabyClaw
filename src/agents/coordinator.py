@@ -986,12 +986,28 @@ class CoordinatorAgent:
             system_prompt=prompts.check_simple_question_prompt,
             temperature=0.1,
         )
-    
+
         if not result.ok:
             self._debug("CLASSIFIER LLM ERROR", result.error)
             return False
-        
-        return result.content.strip().upper().startswith("SIMPLE")
+
+        try:
+            cleaned = re.sub(r"<think>.*?</think>", "", result.content, flags=re.DOTALL).strip()
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+
+            if start == -1 or end == -1 or end <= start:
+                self._debug("CLASSIFIER PARSE ERROR", "No JSON object found in classifier output.")
+                return False
+
+            parsed = json.loads(cleaned[start:end + 1])
+        except Exception as e:
+            self._debug("CLASSIFIER PARSE ERROR", e)
+            return False
+
+        route = str(parsed.get("route", "")).strip().upper()
+        self._debug("CLASSIFIER ROUTE", route)
+        return route == "SIMPLE"
     
     # ===== Main Entry Points =====
     def handle(self, prompt: str) -> str:

@@ -14,7 +14,8 @@ planner_system_prompt = (
     "- Use true/false booleans, not YES/NO strings.\n"
     "- All required keys must be present.\n"
     "- If no memory action is needed, use memory_action: \"NONE\" and memory_input: \"NONE\".\n"
-    "- If no executor action is needed, use executor_actions: [].\n\n"
+    "- If no executor action is needed, use executor_actions: [].\n"
+    "- output_destination must be one of CHAT, FILE, MEMORY, UNKNOWN.\n\n"
 
     "Return JSON using this exact schema:\n"
     "{\n"
@@ -32,7 +33,8 @@ planner_system_prompt = (
     "  ],\n"
     "  \"response_mode\": \"ANSWER\",\n"
     "  \"target_source\": \"NONE\",\n"
-    "  \"transformation\": \"NONE\"\n"
+    "  \"transformation\": \"NONE\",\n"
+    "  \"output_destination\": \"CHAT\"\n"
     "}\n\n"
 
     "Available executor actions:\n"
@@ -154,6 +156,20 @@ planner_system_prompt = (
     "- EXTRACT -> extract a specific literal detail.\n"
     "- EXECUTE_INSTRUCTIONS -> follow instructions found inside source text.\n\n"
 
+    "Output destination values:\n"
+    "- CHAT -> the answer is shown directly to the user in chat.\n"
+    "- FILE -> the answer is written to a file in an approved workspace directory.\n"
+    "- MEMORY -> the answer is stored in long-term memory.\n"
+    "- UNKNOWN -> the destination cannot be determined.\n\n"
+
+    "Output destination rules:\n"
+    "- Use FILE only when the user explicitly asks to save, write, create, edit, or append a file, names a file path, or names a destination folder for a saved file.\n"
+    "- Use CHAT for any answer shown in chat, including drafting emails, messages, code snippets, lists, drafts, and explanations.\n"
+    "- Use MEMORY only when the user explicitly asks to remember or save the answer in long-term memory.\n"
+    "- If the user does not name a file or destination, default to CHAT.\n"
+    "- File-writing executor actions (create_file, write_file, edit_file, append_file, delete_file, delete_directory, create_directory, move_path, move_directory_contents, copy_path, rename_path) must only appear when output_destination is FILE.\n"
+    "- If output_destination is CHAT or MEMORY, executor_actions must not contain any file-writing actions.\n\n"
+
     "General planning rules:\n"
     "- Use needs_memory: true only when a memory action is required.\n"
     "- Use needs_executor: true when executor actions are required.\n"
@@ -193,7 +209,8 @@ planner_system_prompt = (
     "  ],\n"
     "  \"response_mode\": \"RAW\",\n"
     "  \"target_source\": \"EXECUTOR\",\n"
-    "  \"transformation\": \"NONE\"\n"
+    "  \"transformation\": \"NONE\",\n"
+    "  \"output_destination\": \"CHAT\"\n"
     "}\n\n"
 
     "Example 2: User asks: create a notes.txt file\n"
@@ -212,7 +229,8 @@ planner_system_prompt = (
     "  ],\n"
     "  \"response_mode\": \"RAW\",\n"
     "  \"target_source\": \"EXECUTOR\",\n"
-    "  \"transformation\": \"NONE\"\n"
+    "  \"transformation\": \"NONE\",\n"
+    "  \"output_destination\": \"FILE\"\n"
     "}\n\n"
 
     "Example 3: User asks: read the uploaded test file and create a new txt file with the intended outcome\n"
@@ -235,7 +253,8 @@ planner_system_prompt = (
     "  ],\n"
     "  \"response_mode\": \"RAW\",\n"
     "  \"target_source\": \"EXECUTOR\",\n"
-    "  \"transformation\": \"NONE\"\n"
+    "  \"transformation\": \"NONE\",\n"
+    "  \"output_destination\": \"FILE\"\n"
     "}\n\n"
 
     "Example 4: User asks: list the approved directory\n"
@@ -254,7 +273,8 @@ planner_system_prompt = (
     "  ],\n"
     "  \"response_mode\": \"RAW\",\n"
     "  \"target_source\": \"EXECUTOR\",\n"
-    "  \"transformation\": \"NONE\"\n"
+    "  \"transformation\": \"NONE\",\n"
+    "  \"output_destination\": \"CHAT\"\n"
     "}\n\n"
 
     "Example 5: User asks: fix this Python project\n"
@@ -289,7 +309,8 @@ planner_system_prompt = (
     "  ],\n"
     "  \"response_mode\": \"RAW\",\n"
     "  \"target_source\": \"EXECUTOR\",\n"
-    "  \"transformation\": \"NONE\"\n"
+    "  \"transformation\": \"NONE\",\n"
+    "  \"output_destination\": \"FILE\"\n"
     "}\n\n"
 
     "Now return only valid JSON for the user's request."
@@ -731,6 +752,7 @@ simple_response_prompt = (
     "Do not invent events, attachments, bookings, phone numbers, email addresses, universities, people, or personal experiences unless they appear in the request or context.\n"
     "If contact details are missing, omit them rather than using placeholders or fake details.\n"
     "Do not use bracket placeholders such as [Your Name].\n"
+    "If retrieved long-term memory contains a relevant name or relationship, use it directly instead of a placeholder.\n"
     "If a detail is unknown, either omit it naturally or try to retrieve the information from memory.\n"
     "If details are missing, keep the writing general.\n"
 )

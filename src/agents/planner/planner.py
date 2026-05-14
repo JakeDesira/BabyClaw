@@ -263,6 +263,7 @@ class PlannerAgent:
             "response_mode": "RAW",
             "target_source": "NONE",
             "transformation": "NONE",
+            "output_destination": "CHAT",
         }
 
 
@@ -300,6 +301,7 @@ class PlannerAgent:
         valid_response_modes = {"RAW", "TRANSFORM", "ANSWER", "EXECUTE"}
         valid_target_sources = {"NONE", "MEMORY", "EXECUTOR", "BOTH"}
         valid_transformations = {"NONE", "SUMMARISE", "EXPLAIN", "EXTRACT", "EXECUTE_INSTRUCTIONS"}
+        valid_output_destinations = {"CHAT", "FILE", "MEMORY", "UNKNOWN"}
 
         validated = {
             "plan_text": str(plan.get("plan_text", "")),
@@ -312,6 +314,7 @@ class PlannerAgent:
             "response_mode": str(plan.get("response_mode", "RAW")).upper(),
             "target_source": str(plan.get("target_source", "NONE")).upper(),
             "transformation": str(plan.get("transformation", "NONE")).upper(),
+            "output_destination": str(plan.get("output_destination", "")).strip().upper() or "UNKNOWN",
         }
 
         raw_actions = plan.get("executor_actions", [])
@@ -336,6 +339,10 @@ class PlannerAgent:
             validated["memory_action"] = "NONE"
             validated["memory_input"] = "NONE"
 
+        if validated["memory_action"] == "NONE":
+            validated["needs_memory"] = False
+            validated["memory_input"] = "NONE"
+
         if validated["response_mode"] not in valid_response_modes:
             validated["response_mode"] = "RAW"
 
@@ -344,6 +351,24 @@ class PlannerAgent:
 
         if validated["transformation"] not in valid_transformations:
             validated["transformation"] = "NONE"
+
+        if validated["output_destination"] not in valid_output_destinations:
+            validated["output_destination"] = "UNKNOWN"
+
+        if validated["output_destination"] != "FILE":
+            validated["executor_actions"] = [
+                item
+                for item in validated["executor_actions"]
+                if item["action"] not in WRITE_ACTIONS
+            ]
+
+        if (
+            not validated["executor_actions"]
+            and validated["memory_action"] == "NONE"
+            and validated["response_mode"] == "RAW"
+        ):
+            validated["response_mode"] = "ANSWER"
+            validated["target_source"] = "NONE"
 
         return validated
     
